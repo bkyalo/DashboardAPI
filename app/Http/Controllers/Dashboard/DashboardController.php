@@ -1232,7 +1232,7 @@ public function getGraderHighestVariance(Request $request)
         );
         $P              = self::P;
 
-        $cacheKey = "dashboard_overview_v4_{$today}";
+        $cacheKey = "dashboard_overview_v5_{$today}";
         if ($cached = Cache::get($cacheKey)) {
             return ApiResponse::success($cached, 'Dashboard overview retrieved');
         }
@@ -1284,6 +1284,17 @@ public function getGraderHighestVariance(Request $request)
                       AND st.type IN (20, 21)
                 ", [$from, $to]);
                 return (float) ($row->purchases ?? 0);
+            };
+
+            // Customer invoices (type 10) — same basis as sales overview
+            $salesPeriod = function (string $from, string $to) use ($P) {
+                $row = $this->kirima()->selectOne("
+                    SELECT ROUND(COALESCE(SUM(ABS(dt.ov_amount)), 0), 2) AS sales
+                    FROM {$P}debtor_trans dt
+                    WHERE dt.type = 10
+                      AND dt.tran_date BETWEEN ? AND ?
+                ", [$from, $to]);
+                return (float) ($row->sales ?? 0);
             };
 
             $delta = function (float $curr, float $prev): array {
@@ -1387,6 +1398,31 @@ public function getGraderHighestVariance(Request $request)
             $purchMtd       = $purchPeriod($mtdFrom, $today);
             $purchLastMonth = $purchPeriod($prevMonthStart, $prevComparableEnd);
 
+            // ── Sales daily trend (last 7 days) — debtor invoices ────────────
+            $salesDailyRows = $this->kirima()->select("
+                SELECT dt.tran_date,
+                       ROUND(COALESCE(SUM(ABS(dt.ov_amount)), 0), 2) AS sales
+                FROM {$P}debtor_trans dt
+                WHERE dt.type = 10
+                  AND dt.tran_date BETWEEN ? AND ?
+                GROUP BY dt.tran_date
+                ORDER BY dt.tran_date ASC
+            ", [$weekFrom, $today]);
+
+            $salesByDate = [];
+            foreach ($salesDailyRows as $r) {
+                $salesByDate[$r->tran_date] = (float) $r->sales;
+            }
+            $salesTrend = [];
+            for ($i = 0; $i < 7; $i++) {
+                $d = date('Y-m-d', strtotime("{$weekFrom} +{$i} days"));
+                $salesTrend[] = ['date' => $d, 'sales' => $salesByDate[$d] ?? 0.0];
+            }
+            $salesToday     = $salesByDate[$today] ?? 0.0;
+            $salesYesterday = $salesByDate[$yesterday] ?? 0.0;
+            $salesMtd       = $salesPeriod($mtdFrom, $today);
+            $salesLastMonth = $salesPeriod($prevMonthStart, $prevComparableEnd);
+
             // ── Top 5 stores (last 7 days) ───────────────────────────────────
             $storeRows = $this->kirima()->select("
                 SELECT l.loc_code, l.location_name,
@@ -1455,6 +1491,7 @@ public function getGraderHighestVariance(Request $request)
             $weekTareTotal  = array_sum(array_column($milkTrend, 'tare'));
             $weekRevTotal   = array_sum(array_column($revTrend, 'revenue'));
             $weekPurchTotal = array_sum(array_column($purchTrend, 'purchases'));
+            $weekSalesTotal = array_sum(array_column($salesTrend, 'sales'));
 
             $data = [
                 'as_of' => $today,
@@ -1470,6 +1507,12 @@ public function getGraderHighestVariance(Request $request)
                     'month'  => $delta($revMtd, $revLastMonth),
                     'trend7' => $revTrend,
                     'week_total' => round($weekRevTotal, 2),
+                ],
+                'sales' => [
+                    'today'  => $delta($salesToday, $salesYesterday),
+                    'month'  => $delta($salesMtd, $salesLastMonth),
+                    'trend7' => $salesTrend,
+                    'week_total' => round($weekSalesTotal, 2),
                 ],
                 'purchases' => [
                     'today'  => $delta($purchToday, $purchYesterday),
