@@ -1,0 +1,217 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ─── Job 1: Build ─────────────────────────────────────────────────────────────
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_mysql, pdo_sqlite, tokenizer, xml, ctype, json, bcmath, curl, zip
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies (no dev)
+        run: composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+
+      - name: Copy .env and generate key
+        run: |
+          cp .env.example .env
+          php artisan key:generate
+
+      - name: Validate config & routes
+        run: |
+          php artisan config:clear
+          php artisan route:list > /dev/null
+
+  # ─── Job 2: Test ──────────────────────────────────────────────────────────────
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, pdo, pdo_mysql, pdo_sqlite, tokenizer, xml, ctype, json, bcmath, curl, zip
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: vendor
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - name: Install dependencies (with dev for testing)
+        run: composer install --optimize-autoloader --no-interaction --prefer-dist
+
+      - name: Copy .env and set app key
+        run: |
+          cp .env.example .env
+          KEY="base64:$(php -r 'echo base64_encode(random_bytes(32));')"
+          sed -i "s|^APP_KEY=.*|APP_KEY=${KEY}|" .env
+          echo "APP_KEY=${KEY}" >> $GITHUB_ENV
+
+      - name: Run tests (SQLite in-memory)
+        run: php artisan test
+        env:
+          APP_KEY: ${{ env.APP_KEY }}
+
+  # ─── Job 3: Deploy (push to main only) ───────────────────────────────────────
+  deploy:
+    name: Deploy to DigitalOcean
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync code to server (rsync)
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete --exclude='.env' --exclude='storage/' --exclude='vendor/'
+          path: ./
+          remote_path: ${{ secrets.BACKEND_PATH }}
+          remote_host: ${{ secrets.SSH_HOST }}
+          remote_port: ${{ secrets.SSH_PORT }}
+          remote_user: ${{ secrets.SSH_USER }}
+          remote_key:  ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Run post-deploy commands
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key:      ${{ secrets.SSH_PRIVATE_KEY }}
+          port:     ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            cd ${{ secrets.BACKEND_PATH }}
+
+            # Install/update production dependencies
+            composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+
+            # Generate app key only if missing
+            grep -q "^APP_KEY=base64:" .env || php artisan key:generate --force
+
+            # ── Migrations: only run if there are pending ones ──────────────────
+            PENDING=$(php artisan migrate:status --no-ansi 2>/dev/null | grep -c '| Pending |' || true)
+            if [ "${PENDING:-0}" -gt 0 ]; then
+              echo "Running ${PENDING} pending migration(s)…"
+              php artisan migrate --force
+            else
+              echo "No pending migrations — skipping"
+            fi
+
+            # ── Performance indexes: skip if already applied ─────────────────────
+            DB_HOST=$(grep '^DB_HOST=' .env | cut -d '=' -f2-)
+            DB_PORT=$(grep '^DB_PORT=' .env | cut -d '=' -f2-)
+            DB_DATABASE=$(grep '^DB_DATABASE=' .env | cut -d '=' -f2-)
+            DB_USERNAME=$(grep '^DB_USERNAME=' .env | cut -d '=' -f2-)
+            DB_PASSWORD=$(grep '^DB_PASSWORD=' .env | cut -d '=' -f2-)
+            IDX_MARKER=$(mysql -N -s -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USERNAME}" -p"${DB_PASSWORD}" "${DB_DATABASE}" \
+              -e "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=DATABASE() AND index_name='idx_po_ord_date';" 2>/dev/null || echo 0)
+            if [ "${IDX_MARKER:-0}" -eq 0 ]; then
+              echo "Applying performance indexes…"
+              mysql -f -h "${DB_HOST}" -P "${DB_PORT}" -u "${DB_USERNAME}" -p"${DB_PASSWORD}" "${DB_DATABASE}" < database/sql/indexes.sql 2>/dev/null || true
+              echo "Indexes applied"
+            else
+              echo "Indexes already present — skipping"
+            fi
+
+            # ── Seeders: only run if the table is empty ──────────────────────────
+            ROLE_COUNT=$(php artisan tinker --execute="echo \Spatie\Permission\Models\Role::count();" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${ROLE_COUNT:-0}" -eq 0 ]; then
+              echo "Seeding roles…"
+              php artisan db:seed --class=RoleSeeder --force
+            else
+              echo "Roles already seeded (${ROLE_COUNT}) — skipping"
+            fi
+
+            PERM_COUNT=$(php artisan tinker --execute="echo \Spatie\Permission\Models\Permission::count();" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${PERM_COUNT:-0}" -eq 0 ]; then
+              echo "Seeding permissions…"
+              php artisan db:seed --class=PermissionSeeder --force
+              PERM_COUNT=$(php artisan tinker --execute="echo \Spatie\Permission\Models\Permission::count();" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            else
+              echo "Permissions already seeded (${PERM_COUNT}) — skipping"
+            fi
+
+            USER_COUNT=$(php artisan tinker --execute="echo App\Models\User::where('email','support@digisoft.com')->count();" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${USER_COUNT:-0}" -eq 0 ]; then
+              echo "Seeding default users…"
+              php artisan db:seed --class=UserSeeder --force
+            else
+              echo "Default user already exists — skipping"
+            fi
+
+            # ── Assign permissions to admin role only if counts differ ───────────
+            ROLE_PERM_COUNT=$(php artisan tinker --execute="\$r=\Spatie\Permission\Models\Role::where('name','admin')->first(); echo \$r?\$r->permissions()->count():0;" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${ROLE_PERM_COUNT:-0}" -ne "${PERM_COUNT:-0}" ]; then
+              echo "Syncing ${PERM_COUNT} permissions to admin role…"
+              php artisan tinker --execute="\$role=\Spatie\Permission\Models\Role::where('name','admin')->first(); \$perms=\Spatie\Permission\Models\Permission::all(); \$role->syncPermissions(\$perms); echo 'Admin role: '.\$perms->count().' permissions assigned'.PHP_EOL;"
+            else
+              echo "Admin role permissions up to date (${ROLE_PERM_COUNT}) — skipping"
+            fi
+
+            # ── Assign admin role to support user only if not already set ────────
+            HAS_ROLE=$(php artisan tinker --execute="\$u=App\Models\User::where('email','support@digisoft.com')->first(); echo \$u&&\$u->hasRole('admin')?1:0;" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${HAS_ROLE:-0}" -eq 0 ]; then
+              echo "Assigning admin role to support@digisoft.com…"
+              php artisan tinker --execute="\$user=App\Models\User::where('email','support@digisoft.com')->first(); if(\$user){\$user->syncRoles(['admin']); echo 'Admin role assigned to '.\$user->email.PHP_EOL;}"
+            else
+              echo "Admin user already has admin role — skipping"
+            fi
+
+            # Clear permission cache
+            php artisan cache:clear
+
+            # ── Passport OAuth keys and personal client ──────────────────────────
+            php artisan passport:keys --force
+            PASSPORT_CLIENT=$(php artisan tinker --execute="echo Laravel\Passport\Client::where('personal_access_client',1)->count();" 2>/dev/null | tail -1 | tr -d '[:space:][:cntrl:]')
+            if [ "${PASSPORT_CLIENT:-0}" -eq 0 ]; then
+              echo "Creating Passport personal access client…"
+              php artisan passport:client --personal --no-interaction 2>/dev/null || true
+            else
+              echo "Passport personal access client already exists — skipping"
+            fi
+            chown -R www-data:www-data storage/
+            chmod 600 storage/oauth-private.key storage/oauth-public.key
+
+            # Clear old caches and rebuild
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+            php artisan cache:clear
+
+            # Restart queue workers (graceful)
+            php artisan queue:restart || true
+
+            # Reload PHP-FPM (zero-downtime)
+            sudo systemctl reload php8.3-fpm
+
+            echo "Backend deployed at $(date)"
