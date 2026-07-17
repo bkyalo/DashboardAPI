@@ -1232,7 +1232,7 @@ public function getGraderHighestVariance(Request $request)
         );
         $P              = self::P;
 
-        $cacheKey = "dashboard_overview_v3_{$today}";
+        $cacheKey = "dashboard_overview_v4_{$today}";
         if ($cached = Cache::get($cacheKey)) {
             return ApiResponse::success($cached, 'Dashboard overview retrieved');
         }
@@ -1272,11 +1272,12 @@ public function getGraderHighestVariance(Request $request)
             };
 
             // Supplier invoices (20) − credits (21) — net purchase spend
+            // Note: this FA schema has no ov_freight / ov_freight_tax on supp_trans.
             $purchPeriod = function (string $from, string $to) use ($P) {
                 $row = $this->kirima()->selectOne("
                     SELECT ROUND(SUM(
                         CASE WHEN st.type = 21 THEN -1 ELSE 1 END
-                        * (st.ov_amount + st.ov_gst + st.ov_freight + st.ov_freight_tax + st.ov_discount)
+                        * (st.ov_amount + st.ov_gst + st.ov_discount)
                     ), 2) AS purchases
                     FROM {$P}supp_trans st
                     WHERE st.tran_date BETWEEN ? AND ?
@@ -1363,7 +1364,7 @@ public function getGraderHighestVariance(Request $request)
                 SELECT st.tran_date,
                        ROUND(SUM(
                            CASE WHEN st.type = 21 THEN -1 ELSE 1 END
-                           * (st.ov_amount + st.ov_gst + st.ov_freight + st.ov_freight_tax + st.ov_discount)
+                           * (st.ov_amount + st.ov_gst + st.ov_discount)
                        ), 2) AS purchases
                 FROM {$P}supp_trans st
                 WHERE st.tran_date BETWEEN ? AND ?
