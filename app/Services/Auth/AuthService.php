@@ -36,6 +36,8 @@ class AuthService
             return null;
         }
 
+        $user->forceFill(['last_visit_date' => now()])->save();
+
         return $user;
     }
 

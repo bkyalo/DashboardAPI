@@ -151,7 +151,7 @@ class UserController extends Controller
             'rep_popup'     => (bool) $user->rep_popup,
             'default_store' => $user->default_store ?? '',
             'inactive'      => (bool) $user->inactive,
-            'last_visit_date' => $user->last_visit_date?->format('d/m/Y'),
+            'last_visit_date' => $user->last_visit_date?->format('d/m/Y H:i'),
             'joined'        => $user->created_at?->format('d/m/Y'),
         ];
     }
