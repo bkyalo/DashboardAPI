@@ -1232,7 +1232,7 @@ public function getGraderHighestVariance(Request $request)
         );
         $P              = self::P;
 
-        $cacheKey = "dashboard_overview_v2_{$today}";
+        $cacheKey = "dashboard_overview_v3_{$today}";
         if ($cached = Cache::get($cacheKey)) {
             return ApiResponse::success($cached, 'Dashboard overview retrieved');
         }
@@ -1269,6 +1269,20 @@ public function getGraderHighestVariance(Request $request)
                       AND (item.mb_flag = 'B' OR item.mb_flag = 'M' OR item.mb_flag = 'D')
                 ", [$from, $to]);
                 return (float) ($row->revenue ?? 0);
+            };
+
+            // Supplier invoices (20) − credits (21) — net purchase spend
+            $purchPeriod = function (string $from, string $to) use ($P) {
+                $row = $this->kirima()->selectOne("
+                    SELECT ROUND(SUM(
+                        CASE WHEN st.type = 21 THEN -1 ELSE 1 END
+                        * (st.ov_amount + st.ov_gst + st.ov_freight + st.ov_freight_tax + st.ov_discount)
+                    ), 2) AS purchases
+                    FROM {$P}supp_trans st
+                    WHERE st.tran_date BETWEEN ? AND ?
+                      AND st.type IN (20, 21)
+                ", [$from, $to]);
+                return (float) ($row->purchases ?? 0);
             };
 
             $delta = function (float $curr, float $prev): array {
@@ -1344,6 +1358,34 @@ public function getGraderHighestVariance(Request $request)
             $revMtd       = $revPeriod($mtdFrom, $today);
             $revLastMonth = $revPeriod($prevMonthStart, $prevComparableEnd);
 
+            // ── Purchases daily trend (last 7 days) ──────────────────────────
+            $purchDailyRows = $this->kirima()->select("
+                SELECT st.tran_date,
+                       ROUND(SUM(
+                           CASE WHEN st.type = 21 THEN -1 ELSE 1 END
+                           * (st.ov_amount + st.ov_gst + st.ov_freight + st.ov_freight_tax + st.ov_discount)
+                       ), 2) AS purchases
+                FROM {$P}supp_trans st
+                WHERE st.tran_date BETWEEN ? AND ?
+                  AND st.type IN (20, 21)
+                GROUP BY st.tran_date
+                ORDER BY st.tran_date ASC
+            ", [$weekFrom, $today]);
+
+            $purchByDate = [];
+            foreach ($purchDailyRows as $r) {
+                $purchByDate[$r->tran_date] = (float) $r->purchases;
+            }
+            $purchTrend = [];
+            for ($i = 0; $i < 7; $i++) {
+                $d = date('Y-m-d', strtotime("{$weekFrom} +{$i} days"));
+                $purchTrend[] = ['date' => $d, 'purchases' => $purchByDate[$d] ?? 0.0];
+            }
+            $purchToday     = $purchByDate[$today] ?? 0.0;
+            $purchYesterday = $purchByDate[$yesterday] ?? 0.0;
+            $purchMtd       = $purchPeriod($mtdFrom, $today);
+            $purchLastMonth = $purchPeriod($prevMonthStart, $prevComparableEnd);
+
             // ── Top 5 stores (last 7 days) ───────────────────────────────────
             $storeRows = $this->kirima()->select("
                 SELECT l.loc_code, l.location_name,
@@ -1408,9 +1450,10 @@ public function getGraderHighestVariance(Request $request)
                 'qty'       => (float) $r->total_qty,
             ], $farmerRows);
 
-            $weekMilkTotal = array_sum(array_column($milkTrend, 'qty'));
-            $weekTareTotal = array_sum(array_column($milkTrend, 'tare'));
-            $weekRevTotal  = array_sum(array_column($revTrend, 'revenue'));
+            $weekMilkTotal  = array_sum(array_column($milkTrend, 'qty'));
+            $weekTareTotal  = array_sum(array_column($milkTrend, 'tare'));
+            $weekRevTotal   = array_sum(array_column($revTrend, 'revenue'));
+            $weekPurchTotal = array_sum(array_column($purchTrend, 'purchases'));
 
             $data = [
                 'as_of' => $today,
@@ -1426,6 +1469,12 @@ public function getGraderHighestVariance(Request $request)
                     'month'  => $delta($revMtd, $revLastMonth),
                     'trend7' => $revTrend,
                     'week_total' => round($weekRevTotal, 2),
+                ],
+                'purchases' => [
+                    'today'  => $delta($purchToday, $purchYesterday),
+                    'month'  => $delta($purchMtd, $purchLastMonth),
+                    'trend7' => $purchTrend,
+                    'week_total' => round($weekPurchTotal, 2),
                 ],
                 'top_stores'  => $topStores,
                 'top_farmers' => $topFarmers,
