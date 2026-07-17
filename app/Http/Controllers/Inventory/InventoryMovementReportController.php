@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Inventory;
+use App\Support\ReadsFromKirima;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\DB;
 
 class InventoryMovementReportController extends Controller
 {
+    use ReadsFromKirima;
+
     private const P = '0_';
 
     private function isLive(string $to): bool
@@ -41,7 +44,7 @@ class InventoryMovementReportController extends Controller
 
         // ── Location JOIN condition ────────────────────────────────────────────
         $locationJoin = $location !== ''
-            ? "AND sm.loc_code = " . DB::getPdo()->quote($location)
+            ? "AND sm.loc_code = " . $this->kirima()->getPdo()->quote($location)
             : '';
 
         // ── Category WHERE condition ──────────────────────────────────────────
@@ -81,7 +84,7 @@ class InventoryMovementReportController extends Controller
         ";
 
         try {
-            $rows = DB::select($sql);
+            $rows = $this->kirima()->select($sql);
 
             // Add qty_available = opening + qty_in (mirrors PHP report's "Qty Av.")
             foreach ($rows as $row) {
@@ -134,7 +137,7 @@ class InventoryMovementReportController extends Controller
         ";
 
         try {
-            $rows = DB::select($sql);
+            $rows = $this->kirima()->select($sql);
             Cache::put($cacheKey, $rows, 300);
             return ApiResponse::success($rows, 'Milk by location retrieved');
         } catch (\Throwable $e) {

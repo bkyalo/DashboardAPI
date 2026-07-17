@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 
 class GlAccount extends Model
 {
+    protected $connection = 'kirima';
+
 
     protected $table = '0_chart_master';
     protected $fillable = ['account_code', 'account_name', 'account_type', 'inactive'];

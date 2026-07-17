@@ -22,19 +22,19 @@ class AuthService
     ) {}
 
     /**
-     * Authenticate user credentials.
+     * Authenticate user credentials by email or username (user_id).
      */
-    public function authenticate(string $email, string $password): ?User
+    public function authenticate(string $login, string $password): ?User
     {
-         $user = $this->userRepository->findByEmail($email);
+        $user = $this->userRepository->findByEmailOrUserId($login);
 
-        if (!$user || !Hash::check($password, $user->password)) {
+        if (! $user || ! Hash::check($password, $user->password)) {
             return null;
         }
 
-        // if (!$user->is_active) {
-        //     return null;
-        // }
+        if ($user->inactive) {
+            return null;
+        }
 
         return $user;
     }

@@ -34,11 +34,11 @@ class AuthController extends Controller
     public function login(LoginRequest $request): JsonResponse
     {
         $user = $this->authService->authenticate(
-            $request->validated('email'),
+            $request->identifier(),
             $request->validated('password')
         );
 
-        if (!$user) {
+        if (! $user) {
             return ApiResponse::unauthorized('Invalid credentials or account is inactive.');
         }
 
@@ -49,6 +49,7 @@ class AuthController extends Controller
         return ApiResponse::success([
             'user' => [
                 'id' => $user->id,
+                'user_id' => $user->user_id,
                 'name' => $user->real_name,
                 'email' => $user->email,
                 'permissions' => $user->getAllPermissions()->pluck('name'),
@@ -56,7 +57,7 @@ class AuthController extends Controller
                 'must_change_password' => (bool) $user->must_change_password,
             ],
             'token' => $token,
-            "status"=>200
+            'status' => 200,
         ], 'Login successful');
     }
 

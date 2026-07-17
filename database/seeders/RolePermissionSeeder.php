@@ -59,6 +59,7 @@ class RolePermissionSeeder extends Seeder
             // Inventory Module
             'view-inventory',
             'manage-inventory',
+            'inventory.reports',
 
             // Farmers Module
             'view-farmers',
@@ -72,13 +73,25 @@ class RolePermissionSeeder extends Seeder
             'view-banking',
             'manage-banking',
 
+            // Milk collection (analytics)
+            'milk_collection.view',
+            'milk_collection.store',
+            'milk_collection.farmer',
+            'milk_collection.grader',
+            'milk_collection.create',
+            'milk_collection.edit',
+            'milk_collection.export',
+
             // Role Assignment
             'assign-roles',
         ];
 
         // Create permissions
         foreach ($permissions as $permission) {
-            Permission::firstOrCreate(['name' => $permission, 'guard_name' => 'api']);
+            Permission::firstOrCreate(
+                ['name' => $permission],
+                ['guard_name' => 'api']
+            );
         }
 
         // Define roles with their permissions
@@ -95,9 +108,15 @@ class RolePermissionSeeder extends Seeder
                 'view-sales',
                 'view-purchases',
                 'view-inventory',
+                'inventory.reports',
                 'view-farmers',
                 'view-assets',
                 'view-banking',
+                'milk_collection.view',
+                'milk_collection.store',
+                'milk_collection.farmer',
+                'milk_collection.grader',
+                'milk_collection.export',
             ],
 
             'sales_manager' => [
@@ -107,6 +126,7 @@ class RolePermissionSeeder extends Seeder
                 'edit-sales',
                 'view-farmers',
                 'view-inventory',
+                'inventory.reports',
             ],
 
             'purchase_manager' => [
@@ -115,12 +135,14 @@ class RolePermissionSeeder extends Seeder
                 'create-purchases',
                 'edit-purchases',
                 'view-farmers',
+                'inventory.reports',
             ],
 
             'inventory_manager' => [
                 'view-dashboard',
                 'view-inventory',
                 'manage-inventory',
+                'inventory.reports',
             ],
 
             'user' => [
@@ -131,8 +153,11 @@ class RolePermissionSeeder extends Seeder
         // Create roles and assign permissions
         foreach ($roles as $roleName => $rolePermissions) {
             $role = Role::firstOrCreate(
-                ['name' => $roleName, 'guard_name' => 'api'],
-                ['display_name' => ucfirst(str_replace('_', ' ', $roleName))]
+                ['name' => $roleName],
+                [
+                    'guard_name' => 'api',
+                    'display_name' => ucfirst(str_replace('_', ' ', $roleName)),
+                ]
             );
 
             // Sync permissions

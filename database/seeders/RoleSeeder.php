@@ -13,36 +13,26 @@ class RoleSeeder extends Seeder
      */
     public function run(): void
     {
-        // Create roles
-        $adminRole = Role::firstOrCreate(
-            ['name' => 'admin', 'guard_name' => 'web'],
-            ['display_name' => 'Administrator', 'description' => 'Full system access']
-        );
+        // roles.name is unique (not name+guard); keep guard aligned with the API
+        $roles = [
+            ['name' => 'admin', 'display_name' => 'Administrator', 'description' => 'Full system access'],
+            ['name' => 'manager', 'display_name' => 'Manager', 'description' => 'Department manager with limited access'],
+            ['name' => 'supervisor', 'display_name' => 'Supervisor', 'description' => 'Team supervisor'],
+            ['name' => 'user', 'display_name' => 'User', 'description' => 'Regular system user'],
+            ['name' => 'viewer', 'display_name' => 'Viewer', 'description' => 'Read-only access'],
+            ['name' => 'guest', 'display_name' => 'Guest', 'description' => 'Limited guest access'],
+        ];
 
-        $managerRole = Role::firstOrCreate(
-            ['name' => 'manager', 'guard_name' => 'web'],
-            ['display_name' => 'Manager', 'description' => 'Department manager with limited access']
-        );
-
-        $supervisorRole = Role::firstOrCreate(
-            ['name' => 'supervisor', 'guard_name' => 'web'],
-            ['display_name' => 'Supervisor', 'description' => 'Team supervisor']
-        );
-
-        $userRole = Role::firstOrCreate(
-            ['name' => 'user', 'guard_name' => 'web'],
-            ['display_name' => 'User', 'description' => 'Regular system user']
-        );
-
-        $viewerRole = Role::firstOrCreate(
-            ['name' => 'viewer', 'guard_name' => 'web'],
-            ['display_name' => 'Viewer', 'description' => 'Read-only access']
-        );
-
-        $guestRole = Role::firstOrCreate(
-            ['name' => 'guest', 'guard_name' => 'web'],
-            ['display_name' => 'Guest', 'description' => 'Limited guest access']
-        );
+        foreach ($roles as $role) {
+            Role::firstOrCreate(
+                ['name' => $role['name']],
+                [
+                    'guard_name' => 'api',
+                    'display_name' => $role['display_name'],
+                    'description' => $role['description'],
+                ]
+            );
+        }
 
         $this->command->info('✅ Roles created successfully');
     }

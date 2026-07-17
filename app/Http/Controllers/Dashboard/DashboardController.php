@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Dashboard;
+use App\Support\ReadsFromKirima;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
@@ -20,6 +21,8 @@ use App\Http\Controllers\MilkCollection\MilkCollectionController;
  */
 class DashboardController extends Controller
 {
+    use ReadsFromKirima;
+
     private const P = '0_';
 
     private function fmt(string $date): string
@@ -50,7 +53,7 @@ class DashboardController extends Controller
              and   (cc.ctype>3 OR cc.ctype=0)
              group by cm.account_name ";
               
-        $rows = DB::select($sqls); 
+        $rows = $this->kirima()->select($sqls); 
          if($type=='EXPENSES'){ 
         // dd($rows);
          }
@@ -74,7 +77,7 @@ class DashboardController extends Controller
              and   (cc.ctype>3 OR cc.ctype=0)
              group by gl.tran_date ";
               
-        $rows = DB::select($sqls);  
+        $rows = $this->kirima()->select($sqls);  
         $total = collect($rows)->sum('total');
         return [$rows,$total];
     }
@@ -82,7 +85,7 @@ class DashboardController extends Controller
 
     private function salesByCategory(string $from, string $to): array
     {
-        return DB::select(
+        return $this->kirima()->select(
             "SELECT ct.name AS category,
                     IFNULL(SUM(gl.amount), 0) AS amount
              FROM " . self::P . "gl_trans gl
@@ -103,7 +106,7 @@ class DashboardController extends Controller
           $from = Carbon::parse($from)->format('Y-m-d');
          $to   = Carbon::parse($to)->format('Y-m-d');
 
-        $rows = DB::select(
+        $rows = $this->kirima()->select(
             "SELECT
                  l.location_name,
                  move.loc_code,
@@ -124,9 +127,9 @@ class DashboardController extends Controller
              ORDER BY revenue DESC",
             [$from, $to]
         );
-        // $rows = DB::select($sqls);
+        // $rows = $this->kirima()->select($sqls);
        
-        $rowss = DB::table(self::P.'stock_moves as move')
+        $rowss = $this->kirima()->table(self::P.'stock_moves as move')
     ->selectRaw("
         l.location_name,
         move.loc_code,
@@ -183,13 +186,13 @@ class DashboardController extends Controller
         $cp = self::P;
 
         $scaleIds  = array_map(fn ($r) => (int) $r->supplier_id,
-            DB::select("SELECT supplier_id FROM {$cp}suppliers WHERE supp_name LIKE '%scale tare%'"));
+            $this->kirima()->select("SELECT supplier_id FROM {$cp}suppliers WHERE supp_name LIKE '%scale tare%'"));
         $farmerIds = array_map(fn ($r) => (int) $r->supplier_id,
-            DB::select("SELECT supplier_id FROM {$cp}suppliers WHERE supp_name NOT LIKE '%scale tare%' AND supp_type = 'farmer'"));
+            $this->kirima()->select("SELECT supplier_id FROM {$cp}suppliers WHERE supp_name NOT LIKE '%scale tare%' AND supp_type = 'farmer'"));
 
         $scaleIn  = implode(',', $scaleIds  ?: [0]);
         $farmerIn = implode(',', $farmerIds ?: [0]);
-        $row = DB::selectOne(
+        $row = $this->kirima()->selectOne(
             "SELECT
                  ROUND(SUM(CASE WHEN po.supplier_id IN ($scaleIn)  THEN pod.quantity_ordered ELSE 0 END), 2) AS scale_qty,
                  ROUND(SUM(CASE WHEN po.supplier_id IN ($farmerIn) THEN pod.quantity_ordered ELSE 0 END), 2) AS farmer_qty
@@ -199,7 +202,7 @@ class DashboardController extends Controller
             [$from, $to]
         );
         
-        $locRows = DB::select(
+        $locRows = $this->kirima()->select(
             "SELECT l.location_type, IFNULL(ABS(SUM(sm.qty)), 0) AS qty
              FROM {$cp}stock_moves sm
              JOIN {$cp}locations l ON l.loc_code = sm.loc_code
@@ -275,7 +278,7 @@ class DashboardController extends Controller
 
 
         // One query, three conditional aggregates
-        $periods = DB::selectOne(
+        $periods = $this->kirima()->selectOne(
             "SELECT
                  IFNULL(SUM(CASE WHEN gl.tran_date = ?            AND cc.ctype = 1 THEN gl.amount ELSE 0 END), 0) AS rev_today,
                  IFNULL(SUM(CASE WHEN gl.tran_date BETWEEN ? AND ? AND cc.ctype = 1 THEN gl.amount ELSE 0 END), 0) AS rev_mtd,
@@ -330,7 +333,7 @@ class DashboardController extends Controller
                     SELECT DISTINCT loc_code FROM " . self::P . "stock_moves
                     WHERE loc_code NOT LIKE '%T0%' AND loc_code NOT LIKE '%VET%'
                 )";
-                return DB::select($sqls);
+                return $this->kirima()->select($sqls);
             });
             return ApiResponse::success($items, "Stores Retrieved");
         } catch (\Throwable $e) {
@@ -490,7 +493,7 @@ class DashboardController extends Controller
         $sql=" SELECT sp.supplier_id FROM {$cp}debtors_master dm
                 JOIN {$cp}suppliers sp on sp.member_no=dm.cust_no
                  WHERE debtor_no='$debtor_no'"; 
-        $resultc = DB::select($sql);  
+        $resultc = $this->kirima()->select($sql);  
         $row =  $resultc;//?$resultc->fetch_all(MYSQLI_ASSOC)[0]:[];
         $supplierId = isset($row[0]) ? $row[0]->supplier_id : 0; 
         $credits=$this->getCreditWorth(100, $supplierId, $startDate, $endDate, $cp,$totaldays,1,$multiplier);
@@ -546,7 +549,7 @@ class DashboardController extends Controller
         FROM {$cp}debtors_master dm
         WHERE debtor_no = '$debtor_no'";
         
-        $row = DB::select($sql);
+        $row = $this->kirima()->select($sql);
         
          
         //   echo json_encode($row);
@@ -587,7 +590,7 @@ function getCreditWorth($totalRequest = 0, $supplierId, $startDate, $endDate, $d
             AND st.supplier_id = '$supplierId'
             AND st.tran_date BETWEEN '$startDate' AND '$endDate'
     ";  
-    $row = DB::select($sql);
+    $row = $this->kirima()->select($sql);
 
     $totalWorth = isset($row) ? (float)$row[0]->total_worth : 0.0;
     // $totalWorth = isset($ammmt1) ? (float)$ammmt1 : 0.0;
@@ -644,7 +647,7 @@ function getHighRiskFarmer(Request $request) {
     $cacheKey = 'dashboard_high_risk_farmer_v2';
     $result   = Cache::store('file')->get($cacheKey);
     if ($result === null) {
-        $result = DB::select($sql);
+        $result = $this->kirima()->select($sql);
         Cache::store('file')->put($cacheKey, $result, 300);
     }
 
@@ -706,7 +709,7 @@ public function getGraderHighestVariance(Request $request)
                 LIMIT 1
             ";
 
-            $row = DB::selectOne($sql);
+            $row = $this->kirima()->selectOne($sql);
             if ($row) {
                 $row->variance = $row->qty_colected + $row->qty_delivered;
             }
@@ -724,7 +727,7 @@ public function getGraderHighestVariance(Request $request)
         $date = $request->input('date', date('Y-m-d'));
 
         try {
-            $rows = DB::select("
+            $rows = $this->kirima()->select("
                 SELECT
                     l.location_name                                                          AS grader_name,
                     sm.loc_code,
@@ -822,7 +825,7 @@ public function getGraderHighestVariance(Request $request)
             $fileCache = Cache::store('file');
             $rows = $fileCache->get($cacheKey);
             if ($rows === null) {
-                $rows = DB::select($sql);
+                $rows = $this->kirima()->select($sql);
                 try { $fileCache->put($cacheKey, $rows, 300); } catch (\Throwable) {}
             }
 
@@ -969,7 +972,7 @@ public function getGraderHighestVariance(Request $request)
 
             $locFilter = $loc ? 'AND move.loc_code = ?' : '';
             $bindings  = $loc ? [$f, $t, $loc] : [$f, $t];
-            $chartRows = DB::select(
+            $chartRows = $this->kirima()->select(
                 "SELECT move.tran_date,
                         SUM(-move.qty * move.price) AS amt,
                         SUM(-IF(move.standard_cost <> 0,
@@ -1152,7 +1155,7 @@ public function getGraderHighestVariance(Request $request)
         if (!$summary)     $order .= ", debtor.name";
         if (!$datesummary) $order .= ", move.tran_date";
 
-        return DB::select("$select\n$joins\n$where\n$group\n$order");
+        return $this->kirima()->select("$select\n$joins\n$where\n$group\n$order");
     }
     /**
      * GET /api/dashboard/category-items?loccode=&from=&to=
@@ -1201,11 +1204,239 @@ public function getGraderHighestVariance(Request $request)
             }
             $sql .= " GROUP BY item.stock_id, move.tran_date ORDER BY amount DESC";
 
-            $items = DB::select($sql, $params);
+            $items = $this->kirima()->select($sql, $params);
             return ApiResponse::success(array_map(fn($r) => (array)$r, $items), 'Category items retrieved');
 
         } catch (\Throwable $e) {
             return ApiResponse::serverError('Category items query failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * GET /api/dashboard/overview
+     * At-a-glance home metrics: milk/revenue deltas, 7-day trends, top performers.
+     */
+    public function overview(): JsonResponse
+    {
+        $today          = date('Y-m-d');
+        $yesterday      = date('Y-m-d', strtotime('-1 day'));
+        $weekFrom       = date('Y-m-d', strtotime('-6 days'));
+        $mtdFrom        = date('Y-m-01');
+        $prevMonthStart = date('Y-m-01', strtotime('first day of last month'));
+        // Same day-of-month window last month (fairer than full prior month).
+        $dayOfMonth     = (int) date('j');
+        $prevMonthDays  = (int) date('t', strtotime($prevMonthStart));
+        $prevComparableEnd = date(
+            'Y-m-d',
+            strtotime($prevMonthStart . ' +' . (min($dayOfMonth, $prevMonthDays) - 1) . ' days')
+        );
+        $P              = self::P;
+
+        $cacheKey = "dashboard_overview_v2_{$today}";
+        if ($cached = Cache::get($cacheKey)) {
+            return ApiResponse::success($cached, 'Dashboard overview retrieved');
+        }
+
+        try {
+            $scaleIds = $this->kirima()->table($P . 'suppliers')
+                ->where('supp_name', 'LIKE', '%scale%')
+                ->pluck('supplier_id')->toArray();
+            $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
+
+            $milkPeriod = function (string $from, string $to) use ($P, $scaleIn) {
+                $row = $this->kirima()->selectOne("
+                    SELECT
+                        ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS milk_qty,
+                        ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_qty
+                    FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                    JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
+                    WHERE po.ord_date BETWEEN ? AND ?
+                      AND po.ord_date > '2022-11-30'
+                ", [$from, $to]);
+                return [
+                    'milk' => (float) ($row->milk_qty ?? 0),
+                    'tare' => (float) ($row->tare_qty ?? 0),
+                ];
+            };
+
+            $revPeriod = function (string $from, string $to) use ($P) {
+                $row = $this->kirima()->selectOne("
+                    SELECT ROUND(SUM(-move.qty * move.price), 2) AS revenue
+                    FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                    STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
+                    WHERE move.tran_date BETWEEN ? AND ?
+                      AND move.type IN (13, 11)
+                      AND (item.mb_flag = 'B' OR item.mb_flag = 'M' OR item.mb_flag = 'D')
+                ", [$from, $to]);
+                return (float) ($row->revenue ?? 0);
+            };
+
+            $delta = function (float $curr, float $prev): array {
+                $abs = round($curr - $prev, 2);
+                $pct = $prev > 0
+                    ? round(($abs / $prev) * 100, 1)
+                    : ($curr > 0 ? 100.0 : 0.0);
+                return [
+                    'value'     => round($curr, 2),
+                    'prev'      => round($prev, 2),
+                    'delta'     => $abs,
+                    'delta_pct' => $pct,
+                    'up'        => $abs >= 0,
+                ];
+            };
+
+            // ── Milk daily trend (last 7 days) ───────────────────────────────
+            $milkDailyRows = $this->kirima()->select("
+                SELECT po.ord_date,
+                       ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS milk_qty,
+                       ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_qty
+                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
+                WHERE po.ord_date BETWEEN ? AND ?
+                  AND po.ord_date > '2022-11-30'
+                GROUP BY po.ord_date
+                ORDER BY po.ord_date ASC
+            ", [$weekFrom, $today]);
+
+            $milkByDate = [];
+            foreach ($milkDailyRows as $r) {
+                $milkByDate[$r->ord_date] = [
+                    'date' => $r->ord_date,
+                    'qty'  => (float) $r->milk_qty,
+                    'tare' => (float) $r->tare_qty,
+                ];
+            }
+            $milkTrend = [];
+            for ($i = 0; $i < 7; $i++) {
+                $d = date('Y-m-d', strtotime("{$weekFrom} +{$i} days"));
+                $milkTrend[] = $milkByDate[$d] ?? ['date' => $d, 'qty' => 0.0, 'tare' => 0.0];
+            }
+
+            $milkToday     = $milkByDate[$today]['qty'] ?? 0.0;
+            $milkYesterday = $milkByDate[$yesterday]['qty'] ?? 0.0;
+            $milkMtd       = $milkPeriod($mtdFrom, $today)['milk'];
+            $milkLastMonth = $milkPeriod($prevMonthStart, $prevComparableEnd)['milk'];
+
+            // ── Revenue daily trend (last 7 days) ────────────────────────────
+            $revDailyRows = $this->kirima()->select("
+                SELECT move.tran_date,
+                       ROUND(SUM(-move.qty * move.price), 2) AS revenue
+                FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
+                WHERE move.tran_date BETWEEN ? AND ?
+                  AND move.type IN (13, 11)
+                  AND (item.mb_flag = 'B' OR item.mb_flag = 'M' OR item.mb_flag = 'D')
+                GROUP BY move.tran_date
+                ORDER BY move.tran_date ASC
+            ", [$weekFrom, $today]);
+
+            $revByDate = [];
+            foreach ($revDailyRows as $r) {
+                $revByDate[$r->tran_date] = (float) $r->revenue;
+            }
+            $revTrend = [];
+            for ($i = 0; $i < 7; $i++) {
+                $d = date('Y-m-d', strtotime("{$weekFrom} +{$i} days"));
+                $revTrend[] = ['date' => $d, 'revenue' => $revByDate[$d] ?? 0.0];
+            }
+            $revToday     = $revByDate[$today] ?? 0.0;
+            $revYesterday = $revByDate[$yesterday] ?? 0.0;
+            $revMtd       = $revPeriod($mtdFrom, $today);
+            $revLastMonth = $revPeriod($prevMonthStart, $prevComparableEnd);
+
+            // ── Top 5 stores (last 7 days) ───────────────────────────────────
+            $storeRows = $this->kirima()->select("
+                SELECT l.loc_code, l.location_name,
+                       ROUND(SUM(-move.qty * move.price), 2) AS revenue
+                FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
+                JOIN {$P}locations l ON l.loc_code = move.loc_code
+                WHERE move.tran_date BETWEEN ? AND ?
+                  AND move.type IN (13, 11)
+                  AND (item.mb_flag = 'B' OR item.mb_flag = 'M' OR item.mb_flag = 'D')
+                GROUP BY l.loc_code, l.location_name
+                ORDER BY revenue DESC
+                LIMIT 5
+            ", [$weekFrom, $today]);
+
+            $topStores = array_map(fn($r) => [
+                'loc_code' => $r->loc_code,
+                'name'     => $r->location_name,
+                'revenue'  => (float) $r->revenue,
+            ], $storeRows);
+
+            // ── Top 5 graders (last 7 days) ──────────────────────────────────
+            $graderRows = $this->kirima()->select("
+                SELECT po.into_stock_location, l.location_name,
+                       ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS quantity_ordered,
+                       ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare
+                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
+                JOIN {$P}locations l ON l.loc_code = po.into_stock_location
+                WHERE po.ord_date BETWEEN ? AND ?
+                  AND po.ord_date > '2022-11-30'
+                GROUP BY po.into_stock_location, l.location_name
+                ORDER BY quantity_ordered DESC
+                LIMIT 5
+            ", [$weekFrom, $today]);
+
+            $topGraders = array_map(fn($r) => [
+                'code' => $r->into_stock_location,
+                'name' => $r->location_name,
+                'qty'  => (float) $r->quantity_ordered,
+                'tare' => (float) $r->tare,
+            ], $graderRows);
+
+            // ── Top 5 farmers (last 7 days) ──────────────────────────────────
+            $farmerRows = $this->kirima()->select("
+                SELECT po.supplier_id, s.member_no, s.supp_name,
+                       ROUND(SUM(pod.quantity_ordered), 2) AS total_qty
+                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
+                JOIN {$P}suppliers s ON s.supplier_id = po.supplier_id
+                WHERE po.ord_date BETWEEN ? AND ?
+                  AND po.ord_date > '2022-11-30'
+                  AND po.supplier_id NOT IN ({$scaleIn})
+                GROUP BY po.supplier_id, s.member_no, s.supp_name
+                ORDER BY total_qty DESC
+                LIMIT 5
+            ", [$weekFrom, $today]);
+
+            $topFarmers = array_map(fn($r) => [
+                'member_no' => $r->member_no,
+                'name'      => $r->supp_name,
+                'qty'       => (float) $r->total_qty,
+            ], $farmerRows);
+
+            $weekMilkTotal = array_sum(array_column($milkTrend, 'qty'));
+            $weekTareTotal = array_sum(array_column($milkTrend, 'tare'));
+            $weekRevTotal  = array_sum(array_column($revTrend, 'revenue'));
+
+            $data = [
+                'as_of' => $today,
+                'milk'  => [
+                    'today'  => $delta($milkToday, $milkYesterday),
+                    'month'  => $delta($milkMtd, $milkLastMonth),
+                    'trend7' => $milkTrend,
+                    'week_total' => round($weekMilkTotal, 2),
+                    'week_tare'  => round($weekTareTotal, 2),
+                ],
+                'revenue' => [
+                    'today'  => $delta($revToday, $revYesterday),
+                    'month'  => $delta($revMtd, $revLastMonth),
+                    'trend7' => $revTrend,
+                    'week_total' => round($weekRevTotal, 2),
+                ],
+                'top_stores'  => $topStores,
+                'top_farmers' => $topFarmers,
+                'top_graders' => $topGraders,
+            ];
+
+            Cache::put($cacheKey, $data, 300);
+
+            return ApiResponse::success($data, 'Dashboard overview retrieved');
+        } catch (\Throwable $e) {
+            return ApiResponse::serverError('Dashboard overview failed: ' . $e->getMessage());
         }
     }
 }

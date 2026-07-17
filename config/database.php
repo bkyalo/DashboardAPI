@@ -20,6 +20,18 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Legacy analytics connection name
+    |--------------------------------------------------------------------------
+    |
+    | Used by milk collection / dashboard reporting against FrontAccounting
+    | tables (0_*). Keep this separate from the default Laravel database.
+    |
+    */
+
+    'kirima_connection' => env('KIRIMA_DB_CONNECTION', 'kirima'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Connections
     |--------------------------------------------------------------------------
     |
@@ -43,6 +55,9 @@ return [
             'transaction_mode' => 'DEFERRED',
         ],
 
+        /*
+        | Default app database — users, oauth, roles, Laravel migrations, etc.
+        */
         'mysql' => [
             'driver' => 'mysql',
             'url' => env('DB_URL'),
@@ -60,6 +75,32 @@ return [
             'engine' => null,
             'options' => extension_loaded('pdo_mysql') ? array_filter([
                 (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
+        /*
+        | Read-only analytics database (legacy Kirima / FrontAccounting).
+        | Use via DB::connection('kirima') or the ReadsFromKirima trait.
+        */
+        'kirima' => [
+            'driver' => env('KIRIMA_DB_DRIVER', 'mysql'),
+            'host' => env('KIRIMA_DB_HOST', env('DB_HOST', '127.0.0.1')),
+            'port' => env('KIRIMA_DB_PORT', env('DB_PORT', '3306')),
+            'database' => env('KIRIMA_DB_DATABASE', 'kirima'),
+            'username' => env('KIRIMA_DB_USERNAME', 'kirima_ro'),
+            'password' => env('KIRIMA_DB_PASSWORD', ''),
+            'unix_socket' => env('KIRIMA_DB_SOCKET', env('DB_SOCKET', '')),
+            'charset' => env('KIRIMA_DB_CHARSET', 'utf8mb4'),
+            'collation' => env('KIRIMA_DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            // Match FA/legacy SQL that uses zero dates and looser modes
+            'strict' => false,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? \Pdo\Mysql::ATTR_SSL_CA : \PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+                // Encourage read-only session behaviour when the DB user allows it
+                \PDO::MYSQL_ATTR_INIT_COMMAND => 'SET SESSION TRANSACTION READ ONLY',
             ]) : [],
         ],
 

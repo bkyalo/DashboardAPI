@@ -43,4 +43,17 @@ return [
 
     'connection' => env('PASSPORT_CONNECTION'),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Password Grant Client
+    |--------------------------------------------------------------------------
+    |
+    | Used by PassportAuthController when issuing tokens for external systems.
+    |
+    */
+
+    'client_id' => env('PASSPORT_CLIENT_ID'),
+
+    'client_secret' => env('PASSPORT_CLIENT_SECRET'),
+
 ];

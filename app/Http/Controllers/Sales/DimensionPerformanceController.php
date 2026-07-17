@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Sales;
+use App\Support\ReadsFromKirima;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
@@ -11,6 +12,8 @@ use Illuminate\Support\Facades\DB;
 
 class DimensionPerformanceController extends Controller
 {
+    use ReadsFromKirima;
+
     private string $p = '0_';   // table prefix
 
     /**
@@ -33,7 +36,7 @@ class DimensionPerformanceController extends Controller
         // to it. We first deduplicate invoices per dimension (a single invoice
         // could have items from multiple dimensions and must only be counted
         // once per dimension), then sum the header ov_amount and alloc.
-        $rows = DB::select("
+        $rows = $this->kirima()->select("
             SELECT
                 d.id            AS dimension_id,
                 d.name          AS dimension_name,
@@ -88,7 +91,7 @@ class DimensionPerformanceController extends Controller
             return ApiResponse::success($cached, 'Dimension daily data retrieved');
         }
 
-        $rows = DB::select("
+        $rows = $this->kirima()->select("
             SELECT
                 d.id              AS dimension_id,
                 d.name            AS dimension_name,
@@ -131,7 +134,7 @@ class DimensionPerformanceController extends Controller
             return ApiResponse::success($cached, 'Customers retrieved');
         }
         $p    = $this->p;
-        $rows = DB::select("
+        $rows = $this->kirima()->select("
             SELECT dm.debtor_no, dm.name
             FROM {$p}debtors_master dm
             WHERE EXISTS (
@@ -208,7 +211,7 @@ class DimensionPerformanceController extends Controller
 
         [$filterSql, $filterBindings] = $this->buildFilters($request, $p);
 
-        $rows = DB::select("
+        $rows = $this->kirima()->select("
             SELECT
                 dtd.stock_id,
                 COALESCE(NULLIF(dtd.description, ''), sm.description) AS description,
@@ -262,7 +265,7 @@ class DimensionPerformanceController extends Controller
 
         [$filterSql, $filterBindings] = $this->buildFilters($request, $p);
 
-        $rows = DB::select("
+        $rows = $this->kirima()->select("
             SELECT
                 t.trans_no,
                 t.reference,
@@ -371,7 +374,7 @@ class DimensionPerformanceController extends Controller
         $extraSql = $txnWhere ? ('AND ' . implode(' AND ', $txnWhere)) : '';
 
         // Bank payments ($sqly)
-        $bankRows = DB::select("
+        $bankRows = $this->kirima()->select("
             SELECT ba.bank_account_name AS description, SUM(alloc.amt) AS amount
             FROM   {$p}debtor_trans         t
             JOIN   {$p}cust_allocations     alloc ON alloc.trans_no_to    = t.trans_no
@@ -388,7 +391,7 @@ class DimensionPerformanceController extends Controller
         ", array_merge([$from, $to, $id], $txnBindings));
 
         // Credit notes ($sqlz — trans_type_from = 11)
-        $creditRows = DB::select("
+        $creditRows = $this->kirima()->select("
             SELECT SUM(alloc.amt) AS amount
             FROM   {$p}debtor_trans     t
             JOIN   {$p}cust_allocations alloc ON alloc.trans_no_to   = t.trans_no
@@ -405,7 +408,7 @@ class DimensionPerformanceController extends Controller
         // = SUM(ov_amount) - SUM(t.alloc) per distinct dimension invoice.
         // t.alloc is FA's denormalized running-total of all allocations applied,
         // matching the FA report's paid_amount correlated subquery on cust_allocations.
-        $balRows = DB::select("
+        $balRows = $this->kirima()->select("
             SELECT
                 COALESCE(SUM(inv.ov_amount), 0) AS ov_sum,
                 COALESCE(SUM(inv.alloc),     0) AS alloc_sum

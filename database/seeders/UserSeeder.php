@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
+use Spatie\Permission\Models\Role;
 
 class UserSeeder extends Seeder
 {
@@ -53,7 +54,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $admin->assignRole('admin');
+        $admin->assignRole(Role::findByName('admin', 'api'));
 
         // Manager user
         $manager = User::firstOrCreate(
@@ -95,7 +96,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $manager->assignRole('manager');
+        $manager->assignRole(Role::findByName('manager', 'api'));
 
         // Supervisor user
         $supervisor = User::firstOrCreate(
@@ -137,7 +138,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $supervisor->assignRole('supervisor');
+        $supervisor->assignRole(Role::findByName('supervisor', 'api'));
 
         // Regular user
         $user = User::firstOrCreate(
@@ -179,7 +180,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $user->assignRole('user');
+        $user->assignRole(Role::findByName('user', 'api'));
 
         // Viewer user
         $viewer = User::firstOrCreate(
@@ -221,7 +222,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $viewer->assignRole('viewer');
+        $viewer->assignRole(Role::findByName('viewer', 'api'));
 
         // Guest user
         $guest = User::firstOrCreate(
@@ -263,7 +264,7 @@ class UserSeeder extends Seeder
                 'inactive' => false,
             ]
         );
-        $guest->assignRole('guest');
+        $guest->assignRole(Role::findByName('guest', 'api'));
 
         $this->command->info('✅ Users created successfully');
         $this->command->info('');

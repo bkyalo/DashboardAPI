@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\MilkCollection;
 
 use App\Http\Controllers\Controller;
+use App\Support\ReadsFromKirima;
 use App\Http\Responses\ApiResponse;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -21,6 +22,8 @@ use Illuminate\Support\Facades\DB;
  */
 class MilkCollectionController extends Controller
 {
+    use ReadsFromKirima;
+
     private const P = '0_';
 
     private function fmt(string $date): string
@@ -73,12 +76,12 @@ class MilkCollectionController extends Controller
         }
         try {
             
-            // $scaleIds = DB::table(self::P . 'suppliers')
+            // $scaleIds = $this->kirima()->table(self::P . 'suppliers')
             //     ->where('supp_name', 'LIKE', '%scale%')
             //     ->pluck('supplier_id')->toArray();
             // $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
 
-            // $rows = DB::select(
+            // $rows = $this->kirima()->select(
             //     "SELECT
             //         po.ord_date,
             //         ROUND(SUM(CASE WHEN po.supplier_id IN ($scaleIn)
@@ -153,7 +156,7 @@ class MilkCollectionController extends Controller
         }
 
         $P        = self::P;
-        $locQuote = $location !== '' ? DB::getPdo()->quote($location) : null;
+        $locQuote = $location !== '' ? $this->kirima()->getPdo()->quote($location) : null;
 
         // ── Index strategy ────────────────────────────────────────────────────
         // With a store filter: idx_loc_tran_date (loc_code, tran_date) is the
@@ -209,7 +212,7 @@ class MilkCollectionController extends Controller
                 ORDER BY item.category_id, item.stock_id";
 
         try {
-            $data = DB::select($sql);
+            $data = $this->kirima()->select($sql);
             if (!$this->isLive($to)) { Cache::put($cacheKey, $data, $this->historicalTtl()); }
             return ApiResponse::success($data, 'Milk record retrieved');
         } catch (\Throwable $e) {
@@ -233,12 +236,12 @@ class MilkCollectionController extends Controller
 
         try {
             // Pre-fetch scale supplier IDs to avoid LIKE '%scale%' per joined row
-            $scaleIds = DB::table(self::P . 'suppliers')
+            $scaleIds = $this->kirima()->table(self::P . 'suppliers')
                 ->where('supp_name', 'LIKE', '%scale%')
                 ->pluck('supplier_id')->toArray();
             $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
 
-            $locationFilter = $location !== '' ? "AND po.into_stock_location = " . DB::getPdo()->quote($location) : '';
+            $locationFilter = $location !== '' ? "AND po.into_stock_location = " . $this->kirima()->getPdo()->quote($location) : '';
 
             // When querying dates after 2022-11-30 (all modern data), the legacy OR
             // condition is always satisfied by the second branch alone — simplify it
@@ -259,7 +262,7 @@ class MilkCollectionController extends Controller
                  GROUP BY po.into_stock_location, l.location_name
                  ORDER BY quantity_ordered DESC";
 
-            $data = DB::select($sql);
+            $data = $this->kirima()->select($sql);
             $ttl = $this->isLive($to) ? 300 : $this->historicalTtl();
             Cache::put($cacheKey, $data, $ttl);
 
@@ -281,19 +284,19 @@ class MilkCollectionController extends Controller
         $location  = $request->stores ?? '';
         $item_code = '0001';
 
-        $cacheKey = "grader_chart_{$from}_{$to}_" . ($location ?: 'all');
+        $cacheKey = "grader_chart_v2_{$from}_{$to}_" . ($location ?: 'all');
         if ($cached = Cache::get($cacheKey)) {
             return ApiResponse::success($cached, 'Grader chart data retrieved');
         }
 
         try {
-            $scaleIds = DB::table(self::P . 'suppliers')
+            $scaleIds = $this->kirima()->table(self::P . 'suppliers')
                 ->where('supp_name', 'LIKE', '%scale%')
                 ->pluck('supplier_id')->toArray();
             $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
 
-            $locationFilter    = $location !== '' ? "AND po.into_stock_location = " . DB::getPdo()->quote($location) : '';
-            $locationFilterRaw = $location !== '' ? "AND into_stock_location = "    . DB::getPdo()->quote($location) : '';
+            $locationFilter    = $location !== '' ? "AND po.into_stock_location = " . $this->kirima()->getPdo()->quote($location) : '';
+            $locationFilterRaw = $location !== '' ? "AND into_stock_location = "    . $this->kirima()->getPdo()->quote($location) : '';
 
             $legacyCond = $from > '2022-11-30'
                 ? "AND po.ord_date > '2022-11-30'"
@@ -301,6 +304,7 @@ class MilkCollectionController extends Controller
 
             $sql = "SELECT STRAIGHT_JOIN po.ord_date, po.into_stock_location, l.location_name,
                          ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS quantity_ordered,
+                         ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_weight,
                          COUNT(DISTINCT CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN po.supplier_id END) AS farmer_count
                      FROM " . self::P . "purch_orders po FORCE INDEX (ord_date)
                      JOIN " . self::P . "purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
@@ -311,20 +315,18 @@ class MilkCollectionController extends Controller
                      GROUP BY po.ord_date, po.into_stock_location, l.location_name
                      ORDER BY po.ord_date ASC";
 
-            $data = DB::select($sql);
+            $data = $this->kirima()->select($sql);
 
-            // ── Compute absent_count per day via SQL (avoids loading raw supplier rows into PHP) ──
-            // For each day D: farmers who appeared on D-1 but not on D.
-            // All-locations mode: globally unique absent count per day (assigned to first row).
-            // Single-location mode: per-location absent count per day.
-            $dayBefore    = date('Y-m-d', strtotime("$from -1 day"));
-            $locSelectCol = $location !== '' ? ', into_stock_location' : '';
-            $locJoin      = $location !== '' ? ' AND t_curr.into_stock_location = t_prev.into_stock_location' : '';
-            $locGroup     = $location !== '' ? ', t_prev.into_stock_location' : '';
+            // ── Absent count per day × location ──────────────────────────────
+            // Farmers who delivered at location L on D-1 but not on D at L.
+            // Always per-location so Most/Least Absent KPIs are meaningful.
+            $dayBefore = date('Y-m-d', strtotime("$from -1 day"));
 
-            $absentSql = "SELECT t_prev.next_date AS ord_date{$locSelectCol}, COUNT(DISTINCT t_prev.supplier_id) AS absent_count
+            $absentSql = "SELECT t_prev.next_date AS ord_date, t_prev.into_stock_location,
+                                 COUNT(DISTINCT t_prev.supplier_id) AS absent_count
                           FROM (
-                              SELECT DISTINCT supplier_id{$locSelectCol}, DATE_ADD(ord_date, INTERVAL 1 DAY) AS next_date
+                              SELECT DISTINCT supplier_id, into_stock_location,
+                                     DATE_ADD(ord_date, INTERVAL 1 DAY) AS next_date
                               FROM " . self::P . "purch_orders
                               WHERE ord_date BETWEEN '{$dayBefore}' AND DATE_SUB('{$to}', INTERVAL 1 DAY)
                                 AND supplier_id NOT IN ({$scaleIn})
@@ -332,39 +334,28 @@ class MilkCollectionController extends Controller
                                 {$locationFilterRaw}
                           ) t_prev
                           LEFT JOIN (
-                              SELECT DISTINCT supplier_id{$locSelectCol}, ord_date
+                              SELECT DISTINCT supplier_id, into_stock_location, ord_date
                               FROM " . self::P . "purch_orders
                               WHERE ord_date BETWEEN '{$from}' AND '{$to}'
                                 AND supplier_id NOT IN ({$scaleIn})
                                 AND ord_date > '2022-11-30'
                                 {$locationFilterRaw}
-                          ) t_curr ON t_curr.supplier_id = t_prev.supplier_id AND t_curr.ord_date = t_prev.next_date{$locJoin}
+                          ) t_curr
+                            ON t_curr.supplier_id = t_prev.supplier_id
+                           AND t_curr.ord_date = t_prev.next_date
+                           AND t_curr.into_stock_location = t_prev.into_stock_location
                           WHERE t_curr.supplier_id IS NULL
                             AND t_prev.next_date BETWEEN '{$from}' AND '{$to}'
-                          GROUP BY t_prev.next_date{$locGroup}";
+                          GROUP BY t_prev.next_date, t_prev.into_stock_location";
 
-            $absentRows = DB::select($absentSql);
+            $absentRows = $this->kirima()->select($absentSql);
             $absentMap  = [];
             foreach ($absentRows as $r) {
-                $key = $location !== '' ? $r->ord_date . '_' . $r->into_stock_location : $r->ord_date;
-                $absentMap[$key] = (int) $r->absent_count;
+                $absentMap[$r->ord_date . '_' . $r->into_stock_location] = (int) $r->absent_count;
             }
 
-            if ($location !== '') {
-                foreach ($data as $row) {
-                    $row->absent_count = $absentMap[$row->ord_date . '_' . $row->into_stock_location] ?? 0;
-                }
-            } else {
-                $assignedAbsent = [];
-                foreach ($data as $row) {
-                    $date = $row->ord_date;
-                    if (!isset($assignedAbsent[$date])) {
-                        $row->absent_count    = $absentMap[$date] ?? 0;
-                        $assignedAbsent[$date] = true;
-                    } else {
-                        $row->absent_count = 0;
-                    }
-                }
+            foreach ($data as $row) {
+                $row->absent_count = $absentMap[$row->ord_date . '_' . $row->into_stock_location] ?? 0;
             }
 
             $ttl = $this->isLive($to) ? 300 : $this->historicalTtl();
@@ -405,7 +396,7 @@ class MilkCollectionController extends Controller
 
         try {
             // Pre-fetch scale IDs to avoid LIKE '%scale%' per joined row
-            $scaleIds = DB::table("{$P}suppliers")
+            $scaleIds = $this->kirima()->table("{$P}suppliers")
                 ->where('supp_name', 'LIKE', '%scale%')
                 ->pluck('supplier_id')->toArray();
             $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
@@ -419,7 +410,7 @@ class MilkCollectionController extends Controller
             // Group by farmer+date (merging AM/PM shifts into one daily row).
             // Only select columns the frontend uses; force join order via STRAIGHT_JOIN
             // and point the optimizer to the date index.
-            $rows = DB::select("
+            $rows = $this->kirima()->select("
                 SELECT STRAIGHT_JOIN po.supplier_id,
                        s.member_no, s.supp_name, po.ord_date,
                        ROUND(SUM(pod.quantity_ordered), 2) AS quantity_ordered,
@@ -447,7 +438,7 @@ class MilkCollectionController extends Controller
             $idList      = implode(',', array_map('intval', $supplierIds));
 
             // ── Step 3: 30-day history — use STRAIGHT_JOIN + date index ───────
-            $hist30Rows = DB::select("
+            $hist30Rows = $this->kirima()->select("
                 SELECT STRAIGHT_JOIN po2.supplier_id,
                        ROUND(AVG(pod2.quantity_ordered),        4) AS hist_avg,
                        ROUND(STDDEV_POP(pod2.quantity_ordered), 4) AS hist_std
@@ -462,7 +453,7 @@ class MilkCollectionController extends Controller
             foreach ($hist30Rows as $h) { $hist30Map[$h->supplier_id] = $h; }
 
             // ── Step 4: 7-day active days ─────────────────────────────────────
-            $hist7Rows = DB::select("
+            $hist7Rows = $this->kirima()->select("
                 SELECT STRAIGHT_JOIN po2.supplier_id,
                        COUNT(DISTINCT po2.ord_date) AS active_days_last7
                 FROM {$P}purch_orders po2 FORCE INDEX (ord_date)
@@ -566,9 +557,9 @@ class MilkCollectionController extends Controller
     {
         return Cache::remember('fc_lookups', 300, function () {
             $P = self::P;
-            $suppliers = DB::select("SELECT supplier_id, member_no, supp_name FROM {$P}suppliers");
-            $routes    = DB::select("SELECT code, rname FROM {$P}routes");
-            $locations = DB::select("SELECT loc_code, location_name FROM {$P}locations");
+            $suppliers = $this->kirima()->select("SELECT supplier_id, member_no, supp_name FROM {$P}suppliers");
+            $routes    = $this->kirima()->select("SELECT code, rname FROM {$P}routes");
+            $locations = $this->kirima()->select("SELECT loc_code, location_name FROM {$P}locations");
 
             $suppMap  = [];
             $tare_ids = [];
@@ -587,6 +578,121 @@ class MilkCollectionController extends Controller
         });
     }
 
+    /**
+     * Build AND SQL filters for farmer collection endpoints.
+     * Supports: farmer, route, location (name), shift, legacy search (OR across fields).
+     * Exact store code still applied separately via $request->stores.
+     *
+     * @return array{sql:string,key:string,empty:bool}
+     */
+    private function resolveFarmerFieldFilters(Request $request, array $suppMap, array $routeMap, array $locMap): array
+    {
+        $farmer = trim((string) ($request->farmer ?? ''));
+        $route  = trim((string) ($request->route ?? ''));
+        $locQ   = trim((string) ($request->location ?? ''));
+        $shift  = trim((string) ($request->shift ?? ''));
+        $search = trim((string) ($request->search ?? ''));
+
+        $pdo = $this->kirima()->getPdo();
+        $and = [];
+        $keyParts = [
+            'f=' . mb_strtolower($farmer),
+            'r=' . mb_strtolower($route),
+            'l=' . mb_strtolower($locQ),
+            's=' . mb_strtoupper($shift),
+            'q=' . mb_strtolower($search),
+        ];
+
+        if ($farmer !== '') {
+            $sl = mb_strtolower($farmer);
+            $ids = [];
+            foreach ($suppMap as $sid => $s) {
+                if (str_contains(mb_strtolower((string) ($s->supp_name ?? '')), $sl)
+                    || str_contains((string) ($s->member_no ?? ''), $sl)) {
+                    $ids[] = $sid;
+                }
+            }
+            if (empty($ids)) {
+                return ['sql' => '', 'key' => md5(implode('|', $keyParts)), 'empty' => true];
+            }
+            $and[] = 'po.supplier_id IN (' . implode(',', $ids) . ')';
+        }
+
+        if ($route !== '') {
+            $sl = mb_strtolower($route);
+            $codes = [];
+            foreach ($routeMap as $code => $rname) {
+                if (str_contains(mb_strtolower((string) $rname), $sl)
+                    || str_contains(mb_strtolower((string) $code), $sl)) {
+                    $codes[] = $pdo->quote($code);
+                }
+            }
+            if (empty($codes)) {
+                return ['sql' => '', 'key' => md5(implode('|', $keyParts)), 'empty' => true];
+            }
+            $and[] = 'pod.route_id IN (' . implode(',', $codes) . ')';
+        }
+
+        if ($locQ !== '') {
+            $sl = mb_strtolower($locQ);
+            $codes = [];
+            foreach ($locMap as $lcode => $lname) {
+                if (str_contains(mb_strtolower((string) $lname), $sl)
+                    || str_contains(mb_strtolower((string) $lcode), $sl)) {
+                    $codes[] = $pdo->quote($lcode);
+                }
+            }
+            if (empty($codes)) {
+                return ['sql' => '', 'key' => md5(implode('|', $keyParts)), 'empty' => true];
+            }
+            $and[] = 'po.into_stock_location IN (' . implode(',', $codes) . ')';
+        }
+
+        if ($shift !== '') {
+            $and[] = 'UPPER(pod.shift) = ' . $pdo->quote(mb_strtoupper($shift));
+        }
+
+        // Legacy free-text search — OR across farmer / route / location names
+        if ($search !== '') {
+            $sl = mb_strtolower($search);
+            $matchSuppliers = [];
+            foreach ($suppMap as $sid => $s) {
+                if (str_contains(mb_strtolower((string) ($s->supp_name ?? '')), $sl)
+                    || str_contains((string) ($s->member_no ?? ''), $sl)) {
+                    $matchSuppliers[] = $sid;
+                }
+            }
+            $matchRoutes = [];
+            foreach ($routeMap as $code => $rname) {
+                if (str_contains(mb_strtolower((string) $rname), $sl)) {
+                    $matchRoutes[] = $pdo->quote($code);
+                }
+            }
+            $matchLocs = [];
+            foreach ($locMap as $lcode => $lname) {
+                if (str_contains(mb_strtolower((string) $lname), $sl)) {
+                    $matchLocs[] = $pdo->quote($lcode);
+                }
+            }
+            $clauses = [];
+            if (!empty($matchSuppliers)) $clauses[] = 'po.supplier_id IN (' . implode(',', $matchSuppliers) . ')';
+            if (!empty($matchRoutes))    $clauses[] = 'pod.route_id IN (' . implode(',', $matchRoutes) . ')';
+            if (!empty($matchLocs))      $clauses[] = 'po.into_stock_location IN (' . implode(',', $matchLocs) . ')';
+
+            if (empty($clauses)) {
+                return ['sql' => '', 'key' => md5(implode('|', $keyParts)), 'empty' => true];
+            }
+            $and[] = '(' . implode(' OR ', $clauses) . ')';
+        }
+
+        $sql = '';
+        foreach ($and as $clause) {
+            $sql .= " AND {$clause}";
+        }
+
+        return ['sql' => $sql, 'key' => md5(implode('|', $keyParts)), 'empty' => false];
+    }
+
     // ── KPI aggregates endpoint (fast — no row loading) ──────────────────────
     public function farmercollectionKpis(Request $request)
     {
@@ -597,18 +703,40 @@ class MilkCollectionController extends Controller
         $from      = $this->fmt($request->from);
         $to        = $this->fmt($request->to);
         $location  = $request->stores ?? '';
-        $search    = trim($request->search ?? '');
         $item_code = '0001';
         $P         = self::P;
-
-        $cacheKey = "farmer_kpis_{$from}_{$to}_" . ($location ?: 'all') . '_' . md5($search);
-        if (!$this->isLive($to) && ($cached = Cache::get($cacheKey))) {
-            return ApiResponse::success($cached, 'KPIs retrieved');
-        }
 
         // Load lookup maps — small tables, cached 5 min
         ['suppMap' => $suppMap, 'tare_ids' => $tare_ids, 'routeMap' => $routeMap, 'locMap' => $locMap]
             = $this->getLookups();
+
+        $fieldFilters = $this->resolveFarmerFieldFilters($request, $suppMap, $routeMap, $locMap);
+
+        // Full route list for dropdowns (independent of date filters / cache shape).
+        $allRoutes = [];
+        foreach ($routeMap as $code => $name) {
+            $allRoutes[] = (object)['code' => (string) $code, 'name' => (string) $name];
+        }
+        usort($allRoutes, fn($a, $b) => strcmp($a->name, $b->name));
+
+        $cacheKey = "farmer_kpis_v2_{$from}_{$to}_" . ($location ?: 'all') . '_' . $fieldFilters['key'];
+        if (!$this->isLive($to) && ($cached = Cache::get($cacheKey))) {
+            if (empty($cached['routes'])) {
+                $cached['routes'] = $allRoutes;
+            }
+            return ApiResponse::success($cached, 'KPIs retrieved');
+        }
+
+        if ($fieldFilters['empty']) {
+            return ApiResponse::success([
+                'agg'          => null,
+                'top_farmer'   => null,
+                'least_farmer' => null,
+                'top_route'    => null,
+                'centers'      => [],
+                'routes'       => $allRoutes,
+            ], 'KPIs retrieved');
+        }
 
         $tare_in = implode(',', $tare_ids ?: [0]);
 
@@ -616,46 +744,7 @@ class MilkCollectionController extends Controller
         $legacyCond = $from > '2022-11-30'
             ? "AND po.ord_date > '2022-11-30'"
             : "AND ((po.ord_date <= '2022-11-30' AND po.into_stock_location = 'BN') OR po.ord_date > '2022-11-30')";
-
-        // Resolve search term to matching IDs using PHP lookup maps (no LIKE JOIN)
-        $searchFilter = '';
-        if ($search !== '') {
-            $sl = mb_strtolower($search);
-            $matchSuppliers = [];
-            foreach ($suppMap as $sid => $s) {
-                if (str_contains(mb_strtolower((string)($s->supp_name ?? '')), $sl)
-                    || str_contains((string)($s->member_no ?? ''), $sl)) {
-                    $matchSuppliers[] = $sid;
-                }
-            }
-            $matchRoutes = [];
-            foreach ($routeMap as $code => $rname) {
-                if (str_contains(mb_strtolower($rname), $sl)) {
-                    $matchRoutes[] = DB::getPdo()->quote($code);
-                }
-            }
-            $matchLocs = [];
-            foreach ($locMap as $lcode => $lname) {
-                if (str_contains(mb_strtolower($lname), $sl)) {
-                    $matchLocs[] = DB::getPdo()->quote($lcode);
-                }
-            }
-            $clauses = [];
-            if (!empty($matchSuppliers)) $clauses[] = 'po.supplier_id IN (' . implode(',', $matchSuppliers) . ')';
-            if (!empty($matchRoutes))    $clauses[] = 'pod.route_id IN ('   . implode(',', $matchRoutes)    . ')';
-            if (!empty($matchLocs))      $clauses[] = 'po.into_stock_location IN (' . implode(',', $matchLocs) . ')';
-
-            if (empty($clauses)) {
-                return ApiResponse::success([
-                    'agg'          => null,
-                    'top_farmer'   => null,
-                    'least_farmer' => null,
-                    'top_route'    => null,
-                    'centers'      => [],
-                ], 'KPIs retrieved');
-            }
-            $searchFilter = 'AND (' . implode(' OR ', $clauses) . ')';
-        }
+        $searchFilter = $fieldFilters['sql'];
 
         // Two-table base — only the two tables with covering indexes, no JOINs.
         $baseFrom = "
@@ -671,7 +760,7 @@ class MilkCollectionController extends Controller
         try {
             // ── Query 1: totals + active centers in one pass ──────────────────
             // GROUP_CONCAT collects distinct location codes at zero extra scan cost.
-            $agg = DB::selectOne("
+            $agg = $this->kirima()->selectOne("
                 SELECT
                     COUNT(*) AS record_count,
                     ROUND(SUM(pod.quantity_ordered), 2) AS total_qty,
@@ -681,7 +770,8 @@ class MilkCollectionController extends Controller
                     ROUND(SUM(CASE WHEN UPPER(pod.shift) = 'EVENING' THEN pod.quantity_ordered ELSE 0 END), 2) AS evening_qty,
                     COUNT(DISTINCT CASE WHEN po.supplier_id NOT IN ({$tare_in}) THEN po.supplier_id END) AS unique_farmers,
                     COUNT(DISTINCT po.ord_date) AS day_count,
-                    GROUP_CONCAT(DISTINCT po.into_stock_location ORDER BY po.into_stock_location) AS center_codes
+                    GROUP_CONCAT(DISTINCT po.into_stock_location ORDER BY po.into_stock_location) AS center_codes,
+                    GROUP_CONCAT(DISTINCT pod.route_id ORDER BY pod.route_id) AS route_codes
                 {$baseFrom}
             ");
 
@@ -691,9 +781,11 @@ class MilkCollectionController extends Controller
             usort($centers, fn($a, $b) => strcmp($a->name, $b->name));
             unset($agg->center_codes);
 
+            unset($agg->route_codes);
+
             // ── Query 2: per-supplier+route totals (only real farmers) ────────
             // GROUP BY supplier_id + route_id — no name JOINs; enrich in PHP.
-            $farmerRows = DB::select("
+            $farmerRows = $this->kirima()->select("
                 SELECT po.supplier_id, pod.route_id,
                        ROUND(SUM(pod.quantity_ordered), 2) AS total_qty
                 {$baseFrom}
@@ -742,11 +834,12 @@ class MilkCollectionController extends Controller
                 'least_farmer' => $leastFarmer,
                 'top_route'    => $topRoute,
                 'centers'      => $centers,
+                'routes'       => $allRoutes,
             ];
 
             // Today = always fresh (no cache). Historical: 30 days (immutable).
             if (!$this->isLive($to)) {
-                $ttl = $search !== '' ? 600 : $this->historicalTtl();
+                $ttl = $fieldFilters['sql'] !== '' ? 600 : $this->historicalTtl();
                 Cache::put($cacheKey, $data, $ttl);
             }
 
@@ -765,7 +858,6 @@ class MilkCollectionController extends Controller
         $from     = $this->fmt($request->from);
         $to       = $this->fmt($request->to);
         $location = $request->stores ?? '';
-        $search   = trim($request->search ?? '');
         $page     = max(1, (int) ($request->page ?? 1));
         $perPage  = min(5000, max(10, (int) ($request->per_page ?? 10)));
         $item_code = '0001';
@@ -775,58 +867,21 @@ class MilkCollectionController extends Controller
         ['suppMap' => $suppMap, 'tare_ids' => $tare_ids, 'routeMap' => $routeMap, 'locMap' => $locMap]
             = $this->getLookups();
 
+        $fieldFilters = $this->resolveFarmerFieldFilters($request, $suppMap, $routeMap, $locMap);
+        if ($fieldFilters['empty']) {
+            return ApiResponse::success([
+                'data' => [], 'total' => 0, 'per_page' => $perPage,
+                'current_page' => $page, 'last_page' => 1,
+            ], 'Milk record retrieved');
+        }
+
         $tare_in = implode(',', $tare_ids ?: [0]);
 
         $locationFilter = $location !== '' ? "AND po.into_stock_location = '{$location}'" : '';
         $legacyCond = $from > '2022-11-30'
             ? "AND po.ord_date > '2022-11-30'"
             : "AND ((po.ord_date <= '2022-11-30' AND po.into_stock_location = 'BN') OR po.ord_date > '2022-11-30')";
-
-        // ── Search: resolve matching supplier_ids and route_codes in PHP ──────
-        // Avoids LIKE '%...%' JOINs on the hot query path.
-        $searchFilter = '';
-        if ($search !== '') {
-            $sl = mb_strtolower($search);
-            $matchSuppliers = [];
-            foreach ($suppMap as $sid => $s) {
-                if (str_contains(mb_strtolower((string)($s->supp_name ?? '')), $sl)
-                    || str_contains((string)($s->member_no ?? ''), $sl)) {
-                    $matchSuppliers[] = $sid;
-                }
-            }
-            $matchRoutes = [];
-            foreach ($routeMap as $code => $rname) {
-                if (str_contains(mb_strtolower($rname), $sl)) {
-                    $matchRoutes[] = DB::getPdo()->quote($code);
-                }
-            }
-            $matchLocs = [];
-            foreach ($locMap as $lcode => $lname) {
-                if (str_contains(mb_strtolower($lname), $sl)) {
-                    $matchLocs[] = DB::getPdo()->quote($lcode);
-                }
-            }
-
-            $clauses = [];
-            if (!empty($matchSuppliers)) {
-                $clauses[] = 'po.supplier_id IN (' . implode(',', $matchSuppliers) . ')';
-            }
-            if (!empty($matchRoutes)) {
-                $clauses[] = 'pod.route_id IN (' . implode(',', $matchRoutes) . ')';
-            }
-            if (!empty($matchLocs)) {
-                $clauses[] = 'po.into_stock_location IN (' . implode(',', $matchLocs) . ')';
-            }
-
-            if (empty($clauses)) {
-                // Nothing matched — return empty result immediately.
-                return ApiResponse::success([
-                    'data' => [], 'total' => 0, 'per_page' => $perPage,
-                    'current_page' => $page, 'last_page' => 1,
-                ], 'Milk record retrieved');
-            }
-            $searchFilter = 'AND (' . implode(' OR ', $clauses) . ')';
-        }
+        $searchFilter = $fieldFilters['sql'];
 
         $offset = ($page - 1) * $perPage;
 
@@ -843,12 +898,12 @@ class MilkCollectionController extends Controller
         ";
 
         // Cache the COUNT separately — doesn't change per page flip.
-        $countKey = "farmer_cnt_{$from}_{$to}_" . ($location ?: 'all') . '_' . md5($search);
+        $countKey = "farmer_cnt_{$from}_{$to}_" . ($location ?: 'all') . '_' . $fieldFilters['key'];
         $total    = $this->isLive($to) ? null : Cache::get($countKey);
 
         try {
             if ($total === null) {
-                $countRow = DB::selectOne("
+                $countRow = $this->kirima()->selectOne("
                     SELECT COUNT(*) AS total FROM (
                         SELECT 1
                         {$baseFrom}
@@ -862,7 +917,7 @@ class MilkCollectionController extends Controller
                 }
             }
 
-            $rows = DB::select("
+            $rows = $this->kirima()->select("
                 SELECT po.supplier_id, po.ord_date, pod.shift,
                        ROUND(SUM(pod.quantity_ordered), 2) AS quantity_ordered,
                        pod.unit_price, pod.route_id, po.into_stock_location
@@ -909,12 +964,16 @@ class MilkCollectionController extends Controller
         $from      = $this->fmt($request->from);
         $to        = $this->fmt($request->to);
         $location  = $request->stores ?? '';
-        $search    = trim($request->search ?? '');
         $item_code = '0001';
         $P         = self::P;
 
         ['suppMap' => $suppMap, 'tare_ids' => $tare_ids, 'routeMap' => $routeMap, 'locMap' => $locMap]
             = $this->getLookups();
+
+        $fieldFilters = $this->resolveFarmerFieldFilters($request, $suppMap, $routeMap, $locMap);
+        if ($fieldFilters['empty']) {
+            return ApiResponse::success([], 'No matching records');
+        }
 
         $tare_in = implode(',', $tare_ids ?: [0]);
 
@@ -922,42 +981,10 @@ class MilkCollectionController extends Controller
         $legacyCond = $from > '2022-11-30'
             ? "AND po.ord_date > '2022-11-30'"
             : "AND ((po.ord_date <= '2022-11-30' AND po.into_stock_location = 'BN') OR po.ord_date > '2022-11-30')";
-
-        $searchFilter = '';
-        if ($search !== '') {
-            $sl = mb_strtolower($search);
-            $matchSuppliers = [];
-            foreach ($suppMap as $sid => $s) {
-                if (str_contains(mb_strtolower((string)($s->supp_name ?? '')), $sl)
-                    || str_contains((string)($s->member_no ?? ''), $sl)) {
-                    $matchSuppliers[] = $sid;
-                }
-            }
-            $matchRoutes = [];
-            foreach ($routeMap as $code => $rname) {
-                if (str_contains(mb_strtolower($rname), $sl)) {
-                    $matchRoutes[] = DB::getPdo()->quote($code);
-                }
-            }
-            $matchLocs = [];
-            foreach ($locMap as $lcode => $lname) {
-                if (str_contains(mb_strtolower($lname), $sl)) {
-                    $matchLocs[] = DB::getPdo()->quote($lcode);
-                }
-            }
-            $clauses = [];
-            if (!empty($matchSuppliers)) $clauses[] = 'po.supplier_id IN (' . implode(',', $matchSuppliers) . ')';
-            if (!empty($matchRoutes))    $clauses[] = 'pod.route_id IN ('   . implode(',', $matchRoutes)    . ')';
-            if (!empty($matchLocs))      $clauses[] = 'po.into_stock_location IN (' . implode(',', $matchLocs) . ')';
-
-            if (empty($clauses)) {
-                return ApiResponse::success([], 'No matching records');
-            }
-            $searchFilter = 'AND (' . implode(' OR ', $clauses) . ')';
-        }
+        $searchFilter = $fieldFilters['sql'];
 
         try {
-            $rows = DB::select("
+            $rows = $this->kirima()->select("
                 SELECT po.supplier_id, po.ord_date, pod.shift,
                        ROUND(SUM(pod.quantity_ordered), 2) AS quantity_ordered,
                        pod.unit_price, pod.route_id, po.into_stock_location
@@ -1087,7 +1114,7 @@ class MilkCollectionController extends Controller
         if (!$summary)     $order .= ", debtor.name";
         if (!$datesummary) $order .= ", move.tran_date";
 
-        return DB::select("$select\n$joins\n$where\n$group\n$order");
+        return $this->kirima()->select("$select\n$joins\n$where\n$group\n$order");
     }
    function storerevenue(Request $request): array
     {
@@ -1136,7 +1163,7 @@ class MilkCollectionController extends Controller
         // ── Query 2: daily chart (lean — only tran_date + totals) ─────────────
         // Separate simple query: no item/category/debtor columns, just date + sums.
         $locFilter = $loc ? "AND move.loc_code = '$loc'" : '';
-        $chartRows = DB::select(
+        $chartRows = $this->kirima()->select(
             "SELECT move.tran_date,
                     SUM(-move.qty * move.price)                                             AS amt,
                     SUM(-IF(move.standard_cost <> 0,
@@ -1199,11 +1226,11 @@ class MilkCollectionController extends Controller
             $tare_in = implode(',', $tare_ids ?: [0]);
 
             [$row, $datares, $activefarmer] = [
-                DB::selectOne(
+                $this->kirima()->selectOne(
                     "SELECT COUNT(*) AS counts FROM " . self::P . "purch_orders WHERE ord_date BETWEEN ? AND ?",
                     [$from, $to]
                 ),
-                DB::select(
+                $this->kirima()->select(
                     "SELECT
                         ROUND(SUM(CASE WHEN po.supplier_id IN ($tare_in) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare,
                         ROUND(SUM(CASE WHEN po.supplier_id NOT IN ($tare_in) THEN pod.quantity_ordered ELSE 0 END), 2) AS expected
@@ -1235,7 +1262,7 @@ public function getActiveFarmers()
         ['tare_ids' => $tare_ids] = $this->getLookups();
         $tare_in = implode(',', $tare_ids ?: [0]);
 
-        $result = DB::selectOne(
+        $result = $this->kirima()->selectOne(
             "SELECT COUNT(DISTINCT po.supplier_id) AS active_farmers
              FROM " . self::P . "purch_orders po FORCE INDEX (idx_cover_po_date)
              STRAIGHT_JOIN " . self::P . "purch_order_details pod
@@ -1326,7 +1353,7 @@ public function getTareAndFarmerValue(Request $request){
             $sql .= " GROUP BY po.order_no, pod.route_id, pod.shift
                       ORDER BY po.ord_date DESC, po.order_no DESC";
 
-            $rows = DB::select($sql, $params);
+            $rows = $this->kirima()->select($sql, $params);
 
             return ApiResponse::success(
                 array_map(fn($r) => (array) $r, $rows),
@@ -1363,13 +1390,13 @@ public function getTareAndFarmerValue(Request $request){
 
         // If no data exists for yesterday (e.g. DB not yet updated for today),
         // fall back to the most recent date that has deliveries at this location.
-        $hasYesterday = DB::table(self::P . 'purch_orders')
+        $hasYesterday = $this->kirima()->table(self::P . 'purch_orders')
             ->where('ord_date', $yesterday)
             ->where('into_stock_location', $location)
             ->exists();
 
         if (!$hasYesterday) {
-            $latest = DB::table(self::P . 'purch_orders')
+            $latest = $this->kirima()->table(self::P . 'purch_orders')
                 ->where('ord_date', '<', $from)
                 ->where('into_stock_location', $location)
                 ->max('ord_date');
@@ -1385,13 +1412,13 @@ public function getTareAndFarmerValue(Request $request){
         }
 
         try {
-            $scaleIds = DB::table("{$P}suppliers")
+            $scaleIds = $this->kirima()->table("{$P}suppliers")
                 ->where('supp_name', 'LIKE', '%scale%')
                 ->pluck('supplier_id')->toArray();
             $scaleIn = implode(',', array_map('intval', $scaleIds ?: [0]));
 
             // Farmers who delivered yesterday
-            $lookbackFarmers = DB::select("
+            $lookbackFarmers = $this->kirima()->select("
                 SELECT DISTINCT po.supplier_id,
                        s.member_no, s.supp_name, s.contact AS phone,
                        r.rname,
@@ -1412,7 +1439,7 @@ public function getTareAndFarmerValue(Request $request){
             }
 
             // Farmers who DID deliver in the selected period
-            $activePeriod = DB::select("
+            $activePeriod = $this->kirima()->select("
                 SELECT DISTINCT po.supplier_id
                 FROM {$P}purch_orders po
                 JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'

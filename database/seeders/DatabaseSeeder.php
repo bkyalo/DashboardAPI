@@ -10,20 +10,18 @@ class DatabaseSeeder extends Seeder
     use WithoutModelEvents;
 
     /**
-     * Seed the application's database.
+     * Seed the application's database (digidash auth/infra only).
      */
     public function run(): void
     {
-        // Seed roles first
-        $this->call(RoleSeeder::class);
-
-        // Then seed permissions
-        $this->call(PermissionSeeder::class);
-
-        // Finally seed users
-        $this->call(UserSeeder::class);
+        $this->call([
+            RoleSeeder::class,
+            PermissionSeeder::class,
+            RolePermissionSeeder::class,
+            UserSeeder::class,
+        ]);
 
         $this->command->info('');
-        $this->command->info('✨ Database seeding completed successfully!');
+        $this->command->info('Database seeding completed successfully!');
     }
 }

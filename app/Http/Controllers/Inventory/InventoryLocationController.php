@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Inventory;
+use App\Support\ReadsFromKirima;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
@@ -11,9 +12,11 @@ use Illuminate\Support\Facades\DB;
 
 class InventoryLocationController extends Controller
 {
+    use ReadsFromKirima;
+
     public function index(Request $request): JsonResponse
     {
-        $query = DB::table('0_locations')
+        $query = $this->kirima()->table('0_locations')
             ->select('loc_code AS code', 'location_name AS name')
             ->orderBy('location_name');
         if (!$request->boolean('inactive')) {

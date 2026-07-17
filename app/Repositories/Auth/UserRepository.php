@@ -30,6 +30,17 @@ class UserRepository extends BaseRepository
     }
 
     /**
+     * Find user by email or username (user_id).
+     */
+    public function findByEmailOrUserId(string $login): ?User
+    {
+        return User::query()
+            ->where('email', $login)
+            ->orWhere('user_id', $login)
+            ->first();
+    }
+
+    /**
      * Get users by role.
      */
     public function getUsersByRole(string $roleName)

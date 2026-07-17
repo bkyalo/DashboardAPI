@@ -149,8 +149,11 @@ class PermissionSeeder extends Seeder
     {
         foreach ($permissions as $name => $description) {
             Permission::firstOrCreate(
-                ['name' => $name, 'guard_name' => 'web'],
-                ['description' => $description]
+                ['name' => $name],
+                [
+                    'guard_name' => 'api',
+                    'description' => $description,
+                ]
             );
         }
     }
@@ -160,17 +163,17 @@ class PermissionSeeder extends Seeder
      */
     private function assignPermissionsToRoles(): void
     {
-        $adminRole = Role::findByName('admin');
-        $managerRole = Role::findByName('manager');
-        $supervisorRole = Role::findByName('supervisor');
-        $userRole = Role::findByName('user');
-        $viewerRole = Role::findByName('viewer');
+        $adminRole = Role::findByName('admin', 'api');
+        $managerRole = Role::findByName('manager', 'api');
+        $supervisorRole = Role::findByName('supervisor', 'api');
+        $userRole = Role::findByName('user', 'api');
+        $viewerRole = Role::findByName('viewer', 'api');
 
-        // Admin gets all permissions
-        $adminRole->syncPermissions(Permission::all());
+        // Admin gets all API permissions
+        $adminRole->syncPermissions(Permission::where('guard_name', 'api')->get());
 
         // Manager gets most permissions except system
-        $managerPermissions = Permission::whereNotIn('name', [
+        $managerPermissions = Permission::where('guard_name', 'api')->whereNotIn('name', [
             'system.settings',
             'system.roles',
             'system.permissions',
@@ -184,7 +187,7 @@ class PermissionSeeder extends Seeder
         $managerRole->syncPermissions($managerPermissions);
 
         // Supervisor can view most things and perform operations
-        $supervisorPermissions = Permission::where(function ($q) {
+        $supervisorPermissions = Permission::where('guard_name', 'api')->where(function ($q) {
             $q->where('name', 'like', '%.view')
               ->orWhere('name', 'like', '%.export')
               ->orWhere('name', 'like', '%.create')
@@ -201,7 +204,7 @@ class PermissionSeeder extends Seeder
         $supervisorRole->syncPermissions($supervisorPermissions);
 
         // User has basic access
-        $userPermissions = Permission::where(function ($q) {
+        $userPermissions = Permission::where('guard_name', 'api')->where(function ($q) {
             $q->where('name', 'like', '%.view')
               ->orWhere('name', 'like', '%.export')
               ->orWhere('name', 'like', '%.create')
@@ -220,7 +223,7 @@ class PermissionSeeder extends Seeder
         $userRole->syncPermissions($userPermissions);
 
         // Viewer only has view and export
-        $viewerPermissions = Permission::where(function ($q) {
+        $viewerPermissions = Permission::where('guard_name', 'api')->where(function ($q) {
             $q->where('name', 'like', '%.view')
               ->orWhere('name', 'like', '%.export');
         })->get();

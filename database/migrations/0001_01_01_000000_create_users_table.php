@@ -71,8 +71,9 @@ return new class extends Migration
             
             // Account Status
             $table->boolean('inactive')->default(0)->index();
+            $table->boolean('must_change_password')->default(false);
             $table->datetime('last_visit_date')->nullable();
-            
+
             // Timestamps
             $table->timestamps();
         });

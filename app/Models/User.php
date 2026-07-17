@@ -128,4 +128,14 @@ class User extends Authenticatable
             }
         });
     }
+
+    /**
+     * Find the user instance for Passport password grant.
+     */
+    public function findForPassport(string $username): ?self
+    {
+        return static::where('user_id', $username)
+            ->orWhere('email', $username)
+            ->first();
+    }
 }

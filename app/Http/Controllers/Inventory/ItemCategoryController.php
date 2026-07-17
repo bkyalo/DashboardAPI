@@ -1,6 +1,7 @@
 <?php
 
 namespace App\Http\Controllers\Inventory;
+use App\Support\ReadsFromKirima;
 
 use App\Http\Controllers\Controller;
 use App\Http\Responses\ApiResponse;
@@ -11,9 +12,11 @@ use Illuminate\Support\Facades\DB;
 
 class ItemCategoryController extends Controller
 {
+    use ReadsFromKirima;
+
     public function index(Request $request): JsonResponse
     {
-        $query = DB::table('0_stock_category')
+        $query = $this->kirima()->table('0_stock_category')
             ->select('category_id AS id', 'description AS name')
             ->orderBy('description');
 
