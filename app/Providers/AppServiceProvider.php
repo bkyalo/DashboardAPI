@@ -38,7 +38,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // Register Passport routes and middleware
+        // file:// key paths can mis-report mode as the storage dir (770) under FPM.
+        // Files themselves should still be 600/660 and owned by the web user.
+        \Laravel\Passport\Passport::$validateKeyPermissions = false;
+
         \Laravel\Passport\Passport::enablePasswordGrant();
         \Laravel\Passport\Passport::tokensExpireIn(now()->addDays(15));
         \Laravel\Passport\Passport::refreshTokensExpireIn(now()->addDays(30));
