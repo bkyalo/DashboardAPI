@@ -196,7 +196,7 @@ class DashboardController extends Controller
             "SELECT
                  ROUND(SUM(CASE WHEN po.supplier_id IN ($scaleIn)  THEN pod.quantity_ordered ELSE 0 END), 2) AS scale_qty,
                  ROUND(SUM(CASE WHEN po.supplier_id IN ($farmerIn) THEN pod.quantity_ordered ELSE 0 END), 2) AS farmer_qty
-             FROM {$cp}purch_orders po FORCE INDEX (idx_cover_po_date)
+             FROM {$cp}purch_orders po{$this->forceIndex($cp . 'purch_orders', 'idx_cover_po_date')}
              STRAIGHT_JOIN {$cp}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
              WHERE po.ord_date BETWEEN ? AND ?",
             [$from, $to]
@@ -978,7 +978,7 @@ public function getGraderHighestVariance(Request $request)
                         SUM(-IF(move.standard_cost <> 0,
                                 move.qty * move.standard_cost,
                                 move.qty * item.material_cost)) AS cost
-                 FROM " . self::P . "stock_moves move FORCE INDEX (idx_tran_date_type)
+                 FROM " . self::P . "stock_moves move" . $this->forceIndex(self::P . "stock_moves", "idx_tran_date_type") . "
                  STRAIGHT_JOIN " . self::P . "stock_master item ON item.stock_id = move.stock_id
                  WHERE move.tran_date BETWEEN ? AND ?
                    AND move.type IN (13, 11)
@@ -1100,7 +1100,7 @@ public function getGraderHighestVariance(Request $request)
             SUM(-move.qty) * MAX(COALESCE(pp.price, 0))                            AS price";
 
         // ── FROM ──────────────────────────────────────────────────────────────- 
-        $joins = "FROM {$P}stock_moves    move  FORCE INDEX (idx_tran_date_type)
+        $joins = "FROM {$P}stock_moves    move{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
             JOIN {$P}debtor_trans  trans ON  trans.trans_no = move.trans_no
                                          AND trans.type     = move.type
             JOIN {$P}stock_master  item  ON  item.stock_id  = move.stock_id
@@ -1110,7 +1110,7 @@ public function getGraderHighestVariance(Request $request)
                 FROM (
                     SELECT stock_id, price,
                            ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY tran_date) AS rn
-                    FROM {$P}stock_moves FORCE INDEX (idx_tran_date_type)
+                    FROM {$P}stock_moves{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
                     WHERE tran_date >= '$from'
                       AND tran_date <= '$to'
                       AND (type = 25 OR type = 21)
@@ -1248,7 +1248,7 @@ public function getGraderHighestVariance(Request $request)
                     SELECT
                         ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS milk_qty,
                         ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_qty
-                    FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                    FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                     JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
                     WHERE po.ord_date BETWEEN ? AND ?
                       AND po.ord_date > '2022-11-30'
@@ -1262,7 +1262,7 @@ public function getGraderHighestVariance(Request $request)
             $revPeriod = function (string $from, string $to) use ($P) {
                 $row = $this->kirima()->selectOne("
                     SELECT ROUND(SUM(-move.qty * move.price), 2) AS revenue
-                    FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                    FROM {$P}stock_moves move{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
                     STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
                     WHERE move.tran_date BETWEEN ? AND ?
                       AND move.type IN (13, 11)
@@ -1316,7 +1316,7 @@ public function getGraderHighestVariance(Request $request)
                 SELECT po.ord_date,
                        ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS milk_qty,
                        ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_qty
-                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
                 WHERE po.ord_date BETWEEN ? AND ?
                   AND po.ord_date > '2022-11-30'
@@ -1347,7 +1347,7 @@ public function getGraderHighestVariance(Request $request)
             $revDailyRows = $this->kirima()->select("
                 SELECT move.tran_date,
                        ROUND(SUM(-move.qty * move.price), 2) AS revenue
-                FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                FROM {$P}stock_moves move{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
                 STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
                 WHERE move.tran_date BETWEEN ? AND ?
                   AND move.type IN (13, 11)
@@ -1427,7 +1427,7 @@ public function getGraderHighestVariance(Request $request)
             $storeRows = $this->kirima()->select("
                 SELECT l.loc_code, l.location_name,
                        ROUND(SUM(-move.qty * move.price), 2) AS revenue
-                FROM {$P}stock_moves move FORCE INDEX (idx_tran_date_type)
+                FROM {$P}stock_moves move{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
                 STRAIGHT_JOIN {$P}stock_master item ON item.stock_id = move.stock_id
                 JOIN {$P}locations l ON l.loc_code = move.loc_code
                 WHERE move.tran_date BETWEEN ? AND ?
@@ -1449,7 +1449,7 @@ public function getGraderHighestVariance(Request $request)
                 SELECT po.into_stock_location, l.location_name,
                        ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS quantity_ordered,
                        ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare
-                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
                 JOIN {$P}locations l ON l.loc_code = po.into_stock_location
                 WHERE po.ord_date BETWEEN ? AND ?
@@ -1470,7 +1470,7 @@ public function getGraderHighestVariance(Request $request)
             $farmerRows = $this->kirima()->select("
                 SELECT po.supplier_id, s.member_no, s.supp_name,
                        ROUND(SUM(pod.quantity_ordered), 2) AS total_qty
-                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
                 JOIN {$P}suppliers s ON s.supplier_id = po.supplier_id
                 WHERE po.ord_date BETWEEN ? AND ?

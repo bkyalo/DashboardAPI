@@ -163,7 +163,7 @@ class MilkCollectionController extends Controller
         //   most selective — it scans only that store's rows for the period.
         // Without a store filter: idx_tran_date_type (tran_date, type) covers
         //   the date range and type together.
-        $forceIdx  = $locQuote ? 'idx_loc_tran_date'  : 'idx_tran_date_type';
+        $forceIdx  = $this->forceIndex($P . 'stock_moves', $locQuote ? 'idx_loc_tran_date' : 'idx_tran_date_type');
         $locFilter = $locQuote ? "AND move.loc_code = {$locQuote}" : '';
 
         // ── Purchase price ────────────────────────────────────────────────────
@@ -173,7 +173,7 @@ class MilkCollectionController extends Controller
         // moves for the period.
         $priceSub = "(
                         SELECT sm.price
-                        FROM   {$P}stock_moves sm FORCE INDEX (idx_stock_tran_date)
+                        FROM   {$P}stock_moves sm{$this->forceIndex($P . 'stock_moves', 'idx_stock_tran_date')}
                         WHERE  sm.stock_id    = item.stock_id
                           AND  sm.tran_date  >= '$from'
                           AND  sm.tran_date  <= '$to'
@@ -197,7 +197,7 @@ class MilkCollectionController extends Controller
                             move.qty * COALESCE(NULLIF(item.material_cost + item.labour_cost + item.overhead_cost, 0),
                                                 item.purchase_cost, 0)))                   AS cost,
                     SUM(-move.qty) * COALESCE($priceSub, 0)                                AS price
-                FROM {$P}stock_moves    move  FORCE INDEX ({$forceIdx})
+                FROM {$P}stock_moves    move{$forceIdx}
                 JOIN {$P}debtor_trans   trans ON  trans.trans_no = move.trans_no
                                               AND trans.type     = move.type
                 JOIN {$P}stock_master   item  ON  item.stock_id  = move.stock_id
@@ -306,7 +306,7 @@ class MilkCollectionController extends Controller
                          ROUND(SUM(CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS quantity_ordered,
                          ROUND(SUM(CASE WHEN po.supplier_id IN ({$scaleIn}) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare_weight,
                          COUNT(DISTINCT CASE WHEN po.supplier_id NOT IN ({$scaleIn}) THEN po.supplier_id END) AS farmer_count
-                     FROM " . self::P . "purch_orders po FORCE INDEX (ord_date)
+                     FROM " . self::P . "purch_orders po" . $this->forceIndex(self::P . "purch_orders", "ord_date") . "
                      JOIN " . self::P . "purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
                      JOIN " . self::P . "locations l  ON l.loc_code = po.into_stock_location
                      WHERE po.ord_date BETWEEN '{$from}' AND '{$to}'
@@ -415,7 +415,7 @@ class MilkCollectionController extends Controller
                        s.member_no, s.supp_name, po.ord_date,
                        ROUND(SUM(pod.quantity_ordered), 2) AS quantity_ordered,
                        r.rname, l.location_name, po.into_stock_location
-                FROM {$P}purch_orders po FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
                 JOIN {$P}suppliers s             ON s.supplier_id = po.supplier_id
                 JOIN {$P}routes r                ON r.code = pod.route_id
@@ -442,7 +442,7 @@ class MilkCollectionController extends Controller
                 SELECT STRAIGHT_JOIN po2.supplier_id,
                        ROUND(AVG(pod2.quantity_ordered),        4) AS hist_avg,
                        ROUND(STDDEV_POP(pod2.quantity_ordered), 4) AS hist_std
-                FROM {$P}purch_orders po2 FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po2{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod2 ON pod2.order_no = po2.order_no AND pod2.item_code = '{$item_code}'
                 WHERE po2.ord_date BETWEEN '{$hist30_from}' AND '{$hist30_to}'
                   AND po2.supplier_id IN ({$idList})
@@ -456,7 +456,7 @@ class MilkCollectionController extends Controller
             $hist7Rows = $this->kirima()->select("
                 SELECT STRAIGHT_JOIN po2.supplier_id,
                        COUNT(DISTINCT po2.ord_date) AS active_days_last7
-                FROM {$P}purch_orders po2 FORCE INDEX (ord_date)
+                FROM {$P}purch_orders po2{$this->forceIndex($P . 'purch_orders', 'ord_date')}
                 JOIN {$P}purch_order_details pod2 ON pod2.order_no = po2.order_no AND pod2.item_code = '{$item_code}'
                 WHERE pod2.quantity_ordered > 0
                   AND po2.ord_date BETWEEN '{$hist7_from}' AND '{$hist30_to}'
@@ -748,7 +748,7 @@ class MilkCollectionController extends Controller
 
         // Two-table base — only the two tables with covering indexes, no JOINs.
         $baseFrom = "
-            FROM {$P}purch_orders po FORCE INDEX (idx_cover_po_date)
+            FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'idx_cover_po_date')}
             STRAIGHT_JOIN {$P}purch_order_details pod
                        ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
             WHERE po.ord_date BETWEEN '{$from}' AND '{$to}'
@@ -887,7 +887,7 @@ class MilkCollectionController extends Controller
 
         // Two-table base — covering indexes only, no lookup JOINs.
         $baseFrom = "
-            FROM {$P}purch_orders po FORCE INDEX (idx_cover_po_date)
+            FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'idx_cover_po_date')}
             STRAIGHT_JOIN {$P}purch_order_details pod
                        ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
             WHERE po.ord_date BETWEEN '{$from}' AND '{$to}'
@@ -988,7 +988,7 @@ class MilkCollectionController extends Controller
                 SELECT po.supplier_id, po.ord_date, pod.shift,
                        ROUND(SUM(pod.quantity_ordered), 2) AS quantity_ordered,
                        pod.unit_price, pod.route_id, po.into_stock_location
-                FROM {$P}purch_orders po FORCE INDEX (idx_cover_po_date)
+                FROM {$P}purch_orders po{$this->forceIndex($P . 'purch_orders', 'idx_cover_po_date')}
                 STRAIGHT_JOIN {$P}purch_order_details pod
                            ON pod.order_no = po.order_no AND pod.item_code = '{$item_code}'
                 WHERE po.ord_date BETWEEN '{$from}' AND '{$to}'
@@ -1059,7 +1059,7 @@ class MilkCollectionController extends Controller
         // pp: pre-computes one purchase price per stock_id (type 25/21) via a
         // single derived-table pass with ROW_NUMBER() — avoids a correlated
         // sub-select that would re-scan stock_moves for every outer row.
-        $joins = "FROM {$P}stock_moves    move  FORCE INDEX (idx_tran_date_type)
+        $joins = "FROM {$P}stock_moves    move{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
             JOIN {$P}debtor_trans  trans ON  trans.trans_no = move.trans_no
                                          AND trans.type     = move.type
             JOIN {$P}stock_master  item  ON  item.stock_id  = move.stock_id
@@ -1069,7 +1069,7 @@ class MilkCollectionController extends Controller
                 FROM (
                     SELECT stock_id, price,
                            ROW_NUMBER() OVER (PARTITION BY stock_id ORDER BY tran_date) AS rn
-                    FROM {$P}stock_moves FORCE INDEX (idx_tran_date_type)
+                    FROM {$P}stock_moves{$this->forceIndex($P . 'stock_moves', 'idx_tran_date_type')}
                     WHERE tran_date >= '$from'
                       AND tran_date <= '$to'
                       AND (type = 25 OR type = 21)
@@ -1169,7 +1169,7 @@ class MilkCollectionController extends Controller
                     SUM(-IF(move.standard_cost <> 0,
                             move.qty * move.standard_cost,
                             move.qty * item.material_cost))                                 AS cost
-             FROM " . self::P . "stock_moves move FORCE INDEX (idx_tran_date_type)
+             FROM " . self::P . "stock_moves move" . $this->forceIndex(self::P . "stock_moves", "idx_tran_date_type") . "
              STRAIGHT_JOIN " . self::P . "stock_master item ON item.stock_id = move.stock_id
              WHERE move.tran_date BETWEEN ? AND ?
                AND move.type IN (13, 11)
@@ -1234,7 +1234,7 @@ class MilkCollectionController extends Controller
                     "SELECT
                         ROUND(SUM(CASE WHEN po.supplier_id IN ($tare_in) THEN pod.quantity_ordered ELSE 0 END), 2) AS tare,
                         ROUND(SUM(CASE WHEN po.supplier_id NOT IN ($tare_in) THEN pod.quantity_ordered ELSE 0 END), 2) AS expected
-                     FROM " . self::P . "purch_orders po FORCE INDEX (idx_cover_po_date)
+                     FROM " . self::P . "purch_orders po" . $this->forceIndex(self::P . "purch_orders", "idx_cover_po_date") . "
                      STRAIGHT_JOIN " . self::P . "purch_order_details pod ON pod.order_no = po.order_no AND pod.item_code = '0001'
                      WHERE po.ord_date BETWEEN ? AND ?
                        AND po.source_from = 'F'",
@@ -1264,7 +1264,7 @@ public function getActiveFarmers()
 
         $result = $this->kirima()->selectOne(
             "SELECT COUNT(DISTINCT po.supplier_id) AS active_farmers
-             FROM " . self::P . "purch_orders po FORCE INDEX (idx_cover_po_date)
+             FROM " . self::P . "purch_orders po" . $this->forceIndex(self::P . "purch_orders", "idx_cover_po_date") . "
              STRAIGHT_JOIN " . self::P . "purch_order_details pod
                 ON pod.order_no = po.order_no AND pod.item_code = '0001'
              WHERE po.ord_date BETWEEN ? AND ?
