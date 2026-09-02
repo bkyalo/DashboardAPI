@@ -70,6 +70,7 @@ use App\Http\Controllers\Purchases\PurchaseOrderController;
 use App\Http\Controllers\Purchases\PurchaseQuotationController;
 use App\Http\Controllers\Dashboard\DashboardController;
 use App\Http\Controllers\MilkCollection\MilkCollectionController;
+use App\Http\Controllers\MilkCollection\FarmerSupplierStatementController;
 
 /**
  * Authentication Routes
@@ -182,6 +183,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('gradercollections', [MilkCollectionController::class, 'gradercollection']);
         Route::get('graderchartdata',   [MilkCollectionController::class, 'graderchartdata']);
         Route::get('absent-farmers',    [MilkCollectionController::class, 'absentFarmers']);
+        Route::get('farmer-supplier-statement', [FarmerSupplierStatementController::class, 'statement']);
     });
 
     // ── Setup ─────────────────────────────────────────────────────────────────
@@ -313,6 +315,12 @@ Route::middleware('auth:api')->group(function () {
         Route::put('dimensions/{id}',            [DimensionController::class, 'update']);
         Route::delete('dimensions/{id}',         [DimensionController::class, 'destroy']);
     });
+    // messages
+        Route::prefix('messages')->group(function () {
+            Route::get('stats', [\App\Http\Controllers\MessageController::class, 'getStats']);
+            Route::get('user/{id}', [\App\Http\Controllers\MessageController::class, 'getMessagesByUserId']);
+            Route::get('{id}', [\App\Http\Controllers\MessageController::class, 'getMessageById']);
+        });
 
     // ── Banking / GL ───────────────────────────────────────────────────────────
     Route::prefix('banking')->group(function () {
